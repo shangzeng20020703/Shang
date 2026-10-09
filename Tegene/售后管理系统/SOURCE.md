@@ -1,6 +1,6 @@
 # 源码来源与本轮改造
 
-本项目名称为“售后管理系统”，当前交付位置为 `shangzeng20020703/Shang/Tegene/售后管理系统`。这是提取后的独立代码快照，不是 EHR 的工作树、子模块或远程分支；后续售后功能在此目录维护。
+本项目名称为“售后管理系统”，源码同步到 `Jaydon-Lidong/aftersales-field-management` 仓库根目录，以及 `shangzeng20020703/Shang/Tegene/售后管理系统`。这是提取后的独立代码快照，不是 EHR 的工作树、子模块或远程分支；后续售后功能在本项目维护。
 
 - 来源： https://github.com/Jaydon-Lidong/EHR
 - 固定提交：`051b38f04b0e33f1e624da35fa57ecae9fd4974f`

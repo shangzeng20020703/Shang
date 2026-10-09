@@ -1,6 +1,6 @@
 # 售后管理系统
 
-交付位置：`shangzeng20020703/Shang/Tegene/售后管理系统`。当前售后功能及后续修改均在本项目维护，原 EHR 仅作为源码来源，不向原仓库提交或部署改动。
+源码位置：`Jaydon-Lidong/aftersales-field-management` 仓库根目录，以及 `shangzeng20020703/Shang/Tegene/售后管理系统`。当前售后功能及后续修改均在本项目维护，原 EHR 仅作为源码来源，不向 EHR 仓库提交或部署改动。
 
 基于 EHR 固定提交 `051b38f04b0e33f1e624da35fa57ecae9fd4974f` 提取的独立基础版，包含后端、电脑管理端、手机网页端和本地演示环境。
 
