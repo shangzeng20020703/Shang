@@ -23,6 +23,9 @@ class _EmptyCalendarResult:
 
 
 class _EmptyCalendarDb:
+    async def get(self, model, key):
+        return None
+
     async def execute(self, stmt):
         return _EmptyCalendarResult()
 
@@ -99,19 +102,18 @@ class TestAttendanceClockNotificationPolicy:
         assert "考勤同步" not in service_source
 
 
-class TestWorkCalendarOfficialPlan:
-    """国务院节假日兜底口径。"""
-
-    def test_2026_may_9_is_makeup_workday(self):
-        assert WorkCalendarService._official_day_type(date(2026, 5, 9)) == DayType.special_workday
-
-    def test_2026_labor_day_is_holiday(self):
-        assert WorkCalendarService._official_day_type(date(2026, 5, 1)) == DayType.holiday
+class TestCompanyHolidayPlan:
+    @pytest.mark.asyncio
+    async def test_explicit_saturday_is_holiday(self):
+        assert await WorkCalendarService.get_day_type(_EmptyCalendarDb(), date(2026, 5, 2)) == DayType.holiday
 
     @pytest.mark.asyncio
-    async def test_get_day_type_uses_official_plan_before_weekday_fallback(self):
-        result = await WorkCalendarService.get_day_type(_EmptyCalendarDb(), date(2026, 5, 9))
-        assert result == DayType.special_workday
+    async def test_no_makeup_workday_from_official_plan(self):
+        assert await WorkCalendarService.get_day_type(_EmptyCalendarDb(), date(2026, 5, 9)) == DayType.weekend
+
+    @pytest.mark.asyncio
+    async def test_unlisted_monday_is_workday(self):
+        assert await WorkCalendarService.get_day_type(_EmptyCalendarDb(), date(2026, 2, 16)) == DayType.workday
 
 
 class TestTimezone:

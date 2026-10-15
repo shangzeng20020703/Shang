@@ -444,6 +444,7 @@
 
             <section v-if="showHolidayGuide" class="wecom-holiday-note">
               <p v-for="line in holidayGuideLines" :key="line">{{ line }}</p>
+              <button v-if="holidayGuideError" type="button" @click="loadHolidayGuide">重新加载</button>
             </section>
 
             <section v-if="showPunchCorrectionEligibilityPanel" class="punch-eligibility-section" aria-label="补卡资格">
@@ -969,16 +970,39 @@ const templateNoticeText = computed(() => {
   return selectedTemplate.value.description || selectedTemplate.value.remark || '请按模板要求填写申请信息'
 })
 const showHolidayGuide = computed(() => selectedTemplate.value ? isLegalOvertimeTemplate(selectedTemplate.value) : false)
-const holidayGuideLines = [
-  '法定节假日如下：',
-  '新年（元旦）：1月1日',
-  '春节：农历正月初一、初二、初三',
-  '清明节：农历清明当日',
-  '劳动节：5月1-2日',
-  '端午节：农历端午当日',
-  '中秋节：农历中秋当日',
-  '国庆节：10月1日、2日、3日',
-]
+const holidayGuideYear = computed(() => {
+  const durationField = selectedTemplate.value ? visibleTemplateFields(selectedTemplate.value).find((field: any) => field.field_type === 'duration') : null
+  const selected = String(formData.value[durationField?.code || 'overtime_duration']?.start || '')
+  const selectedYear = Number(selected.slice(0, 4))
+  return /^\d{4}-/.test(selected) && selectedYear >= 1900 && selectedYear <= 2100
+    ? selectedYear : Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', year: 'numeric' }).format(new Date()))
+})
+const holidayGuideEntries = ref<Array<{ date: string, holiday_name: string }>>([])
+const holidayGuideLoading = ref(false)
+const holidayGuideError = ref(false)
+let holidayGuideRequestId = 0
+const holidayGuideLines = computed(() => {
+  const heading = `${holidayGuideYear.value} 年公司节假日表：`
+  if (holidayGuideLoading.value) return [heading, '正在读取节假日表…']
+  if (holidayGuideError.value) return [heading, '节假日表读取失败，请重试。']
+  if (!holidayGuideEntries.value.length) return [heading, '该年度暂无已配置节假日，请联系管理员确认。']
+  return [heading, ...holidayGuideEntries.value.map(row => `${row.date}　${row.holiday_name}`)]
+})
+async function loadHolidayGuide() {
+  if (!showHolidayGuide.value) return
+  const requestId = ++holidayGuideRequestId
+  holidayGuideLoading.value = true
+  holidayGuideError.value = false
+  try {
+    const result = await get(`/attendance/legal-holidays/${holidayGuideYear.value}`)
+    if (requestId === holidayGuideRequestId) holidayGuideEntries.value = result.entries || []
+  } catch {
+    if (requestId === holidayGuideRequestId) { holidayGuideEntries.value = []; holidayGuideError.value = true }
+  } finally { if (requestId === holidayGuideRequestId) holidayGuideLoading.value = false }
+}
+watch([showHolidayGuide, holidayGuideYear], () => { void loadHolidayGuide() }, { immediate: true })
+onIonViewWillEnter(() => { void loadHolidayGuide() })
+onBeforeUnmount(() => { holidayGuideRequestId++ })
 const templateCreatorText = computed(() => {
   const template = selectedTemplate.value || {}
   const creator = template.creator_name || template.created_by_name || template.creator?.name || template.owner_name || '管理员'

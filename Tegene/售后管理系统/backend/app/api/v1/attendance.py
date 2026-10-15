@@ -62,6 +62,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.services.map_settings import browser_map_key
+from app.services.legal_holidays import LegalHolidayService, LegalHolidayYearOut, LegalHolidayYearUpdate
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_roles
 from app.models.approval import ApprovalInstance
@@ -4172,11 +4173,32 @@ async def review_punch_correction(
 # 工作日历
 # ===================================================================
 
+@router.get("/legal-holidays/{year}", response_model=LegalHolidayYearOut)
+async def get_legal_holidays(
+    year: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """读取公司维护的年度节假日清单。"""
+    return await LegalHolidayService.get_year(db, year)
+
+
+@router.put("/legal-holidays/{year}", response_model=LegalHolidayYearOut)
+async def update_legal_holidays(
+    year: int,
+    data: LegalHolidayYearUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(require_roles("admin")),
+):
+    """管理员保存整年清单；不触发历史记录重算。"""
+    return await LegalHolidayService.put_year(db, year, data, current_user)
+
+
 @router.post("/calendar", response_model=WorkCalendarOut, status_code=status.HTTP_201_CREATED)
 async def create_calendar_entry(
     data: WorkCalendarCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin")),
 ):
     """
     POST /attendance/calendar — 创建工作日历条目
@@ -4186,8 +4208,7 @@ async def create_calendar_entry(
         考勤计算时会参考日历条目判断某天是否为工作日。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
-        建议前端限制为 HR/admin 才能编辑日历。
+        仅系统管理员可修改。
 
     请求体 (Body)：
         WorkCalendarCreate，主要字段：
@@ -4210,7 +4231,7 @@ async def create_calendar_entry(
 async def batch_create_calendar(
     data: WorkCalendarBatchCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin")),
 ):
     """
     POST /attendance/calendar/batch — 批量创建工作日历条目
@@ -4220,7 +4241,7 @@ async def batch_create_calendar(
         内部调用 WorkCalendarService.batch_create 批量写入数据库。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
+        仅系统管理员可修改。
 
     请求体 (Body)：
         WorkCalendarBatchCreate，主要字段：
@@ -4273,7 +4294,7 @@ async def update_calendar_entry(
     calendar_id: int,
     data: WorkCalendarUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin")),
 ):
     """
     PUT /attendance/calendar/{calendar_id} — 更新工作日历条目
@@ -4282,7 +4303,7 @@ async def update_calendar_entry(
         修改指定工作日历条目，如更改日期类型、更新备注等。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
+        仅系统管理员可修改。
 
     路径参数 (Path)：
         - calendar_id: int   工作日历条目主键 ID
@@ -4307,7 +4328,7 @@ async def update_calendar_entry(
 async def delete_calendar_entry(
     calendar_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin")),
 ):
     """
     DELETE /attendance/calendar/{calendar_id} — 删除工作日历条目
@@ -4316,7 +4337,7 @@ async def delete_calendar_entry(
         删除指定工作日历条目，通常用于撤销错误录入的节假日/调休配置。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
+        仅系统管理员可修改。
 
     路径参数 (Path)：
         - calendar_id: int   工作日历条目主键 ID

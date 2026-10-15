@@ -330,6 +330,7 @@
             <router-link to="/field">前往项目库</router-link>
           </el-alert>
           <div class="filter-row">
+            <el-button @click="openHolidayCalendar"><el-icon><Calendar /></el-icon> 节假日表</el-button>
             <el-button type="primary" @click="openRuleDialog()">
               <el-icon><Plus /></el-icon> 新增规则
             </el-button>
@@ -1189,9 +1190,9 @@
             </div>
           </div>
           <el-form-item label="节假日">
-            <el-checkbox v-model="ruleForm.extra.legal_holiday_no_punch">中国法定节假日不用打卡</el-checkbox>
-            <span class="holiday-desc">法定节假日及调休放假日不用打卡，补班日期按正常上班时间打卡</span>
-            <el-button link type="primary" class="hint-link" @click="openHolidayCalendar">查看法定节假日日历</el-button>
+            <el-checkbox v-model="ruleForm.extra.legal_holiday_no_punch">公司节假日表内日期不用打卡</el-checkbox>
+            <span class="holiday-desc">未列日期按普通工作日或周末执行；节假日表由系统管理员维护</span>
+            <el-button link type="primary" class="hint-link" @click="openHolidayCalendar">查看节假日表与日历</el-button>
           </el-form-item>
           <el-form-item :label="ruleForm.extra.rule_type === 'free' ? '打卡设置' : '休息日'">
             <el-button @click="openRestdaySettingDialog">设置</el-button>
@@ -1864,24 +1865,67 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="holidayCalendarVisible" title="法定节假日日历" width="980px" class="modern-dialog holiday-calendar-dialog" append-to-body>
+    <el-dialog v-model="holidayCalendarVisible" title="法定节假日表" width="min(1050px, 96vw)" top="4vh" class="modern-dialog holiday-calendar-dialog" append-to-body :before-close="beforeCloseHolidayCalendar">
       <div class="holiday-toolbar">
-        <el-select v-model="holidayCalendarYear" style="width: 110px">
+        <el-select :model-value="holidayCalendarYear" filterable :disabled="holidaySaving || holidayCalendarLoading" style="width: 110px" @change="changeHolidayYear">
           <el-option v-for="y in holidayYearOptions" :key="y" :label="`${y}年`" :value="y" />
         </el-select>
         <el-button @click="goToCurrentHolidayMonth">回到本月</el-button>
-        <span class="holiday-source">按国务院办公厅当年节假日通知同步，补班按工作日打卡</span>
+        <span class="holiday-source">{{ holidaySourceText }}</span>
+        <el-button :disabled="holidaySaving || holidayCalendarLoading" @click="reloadHolidayYear">重新加载</el-button>
         <div class="holiday-legend">
           <span><i class="legend-dot legend-work"></i>工作日</span>
-          <span><i class="legend-dot legend-rest"></i>休息日</span>
+          <span><i class="legend-dot legend-rest"></i>周末 / 节假日</span>
         </div>
       </div>
-      <div class="holiday-month-switch">
+      <el-alert v-if="holidayLoadError" type="error" title="节假日表读取失败，请重试" show-icon :closable="false" class="holiday-editor-alert">
+        <template #default><el-button link type="primary" @click="loadHolidayCalendarFromServer(holidayCalendarYear)">重新加载</el-button></template>
+      </el-alert>
+      <template v-else>
+        <div class="holiday-editor-header">
+          <div>
+            <strong>{{ holidayCalendarYear }} 年节假日</strong>
+            <span class="holiday-editor-count">共 {{ holidayDraft.length }} 天 · 星期自动计算</span>
+          </div>
+          <div v-if="canEditLegalHolidays" class="holiday-editor-actions">
+            <el-button :disabled="holidayCalendarLoading || holidaySaving" @click="addHolidayRow"><el-icon><Plus /></el-icon> 添加一行</el-button>
+            <el-button type="primary" :disabled="holidayCalendarLoading || !holidayDirty" :loading="holidaySaving" @click="saveHolidayYear">保存本年表格</el-button>
+          </div>
+        </div>
+        <el-table :data="holidayDraft" border stripe class="holiday-editor-table" max-height="350" v-loading="holidayCalendarLoading" empty-text="本年暂无节假日，未列日期按普通工作日或周末执行">
+          <el-table-column label="日期" width="190">
+            <template #default="{ row }">
+              <el-date-picker v-if="canEditLegalHolidays" v-model="row.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :disabled-date="isOutsideHolidayYear" :disabled="holidaySaving || holidayCalendarLoading" class="holiday-date-picker" />
+              <span v-else>{{ row.date }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="星期" width="105">
+            <template #default="{ row }">{{ weekdayForHoliday(row.date) }}</template>
+          </el-table-column>
+          <el-table-column label="日期类型" width="150">
+            <template #default><el-tag type="success">法定节假日</el-tag></template>
+          </el-table-column>
+          <el-table-column label="节日名称" min-width="230">
+            <template #default="{ row }">
+              <el-input v-if="canEditLegalHolidays" v-model="row.holiday_name" maxlength="100" :disabled="holidaySaving || holidayCalendarLoading" placeholder="填写节日名称" />
+              <span v-else>{{ row.holiday_name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="canEditLegalHolidays" label="操作" width="90" align="center">
+            <template #default="{ $index }"><el-button link type="danger" :disabled="holidaySaving || holidayCalendarLoading" @click="removeHolidayRow($index)">删除</el-button></template>
+          </el-table-column>
+        </el-table>
+        <el-alert v-if="holidayPastDatesChanged" type="warning" show-icon :closable="false" class="holiday-editor-alert" title="过去日期发生变更；已生成的考勤、审批和汇总不会自动重算。" />
+        <p v-if="!canEditLegalHolidays" class="holiday-editor-readonly">当前账号只有查看权限；仅系统管理员可以修改节假日表。</p>
+      </template>
+      <p class="holiday-editor-readonly">此表为全局节假日；具体地点的特殊日仍按地点配置执行。</p>
+      <div v-if="!holidayLoadError && !holidayCalendarLoading" class="holiday-preview-heading">日历预览 <span>显示当前表格内容{{ holidayDirty ? '（尚未保存）' : '' }}</span></div>
+      <div v-if="!holidayLoadError && !holidayCalendarLoading" class="holiday-month-switch">
         <el-button link @click="switchHolidayMonth(-1)">‹</el-button>
         <strong>{{ holidayCalendarYear }}年{{ holidayCalendarMonth }}月</strong>
         <el-button link @click="switchHolidayMonth(1)">›</el-button>
       </div>
-      <div class="holiday-grid" v-loading="holidayCalendarLoading">
+      <div v-if="!holidayLoadError && !holidayCalendarLoading" class="holiday-grid">
         <div v-for="head in ['周一', '周二', '周三', '周四', '周五', '周六', '周日']" :key="`h-${head}`" class="holiday-grid__head">{{ head }}</div>
         <div
           v-for="(cell, idx) in holidayCalendarCells"
@@ -2672,6 +2716,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import request, { get, post, put, del } from '@/utils/request'
+import { getWebAuthRoles, isWebAuthSuperuser } from '@/utils/authSession'
 import { useDepartmentTree } from '@/composables/useDepartmentTree'
 import { useResponsiveLayout } from '@/composables/useResponsiveLayout'
 import {
@@ -3744,64 +3789,6 @@ const assigneeDefaultExpandedKeys = computed(() => {
   return keys
 })
 
-const officialHolidayPlan: Record<number, {
-  holidays: Array<{ name: string, start: string, end: string }>
-  makeupWorkdays: string[]
-}> = {
-  // 国办发明电〔2024〕12号
-  2025: {
-    holidays: [
-      { name: '元旦', start: '2025-01-01', end: '2025-01-01' },
-      { name: '春节', start: '2025-01-28', end: '2025-02-04' },
-      { name: '清明节', start: '2025-04-04', end: '2025-04-06' },
-      { name: '劳动节', start: '2025-05-01', end: '2025-05-05' },
-      { name: '端午节', start: '2025-05-31', end: '2025-06-02' },
-      { name: '国庆节/中秋节', start: '2025-10-01', end: '2025-10-08' },
-    ],
-    makeupWorkdays: ['2025-01-26', '2025-02-08', '2025-04-27', '2025-09-28', '2025-10-11'],
-  },
-  // 国办发明电〔2025〕7号
-  2026: {
-    holidays: [
-      { name: '元旦', start: '2026-01-01', end: '2026-01-03' },
-      { name: '春节', start: '2026-02-15', end: '2026-02-23' },
-      { name: '清明节', start: '2026-04-04', end: '2026-04-06' },
-      { name: '劳动节', start: '2026-05-01', end: '2026-05-05' },
-      { name: '端午节', start: '2026-06-19', end: '2026-06-21' },
-      { name: '中秋节', start: '2026-09-25', end: '2026-09-27' },
-      { name: '国庆节', start: '2026-10-01', end: '2026-10-07' },
-    ],
-    makeupWorkdays: ['2026-02-14', '2026-02-28', '2026-05-09', '2026-09-20', '2026-10-10'],
-  },
-}
-function normalizeHolidayCalendarTag(tag: unknown) {
-  return String(tag || '').trim().replace(/调休上班/g, '补班')
-}
-
-const holidayPresetMap: Record<number, {
-  workdays: string[]
-  restdays: string[]
-  tags: Record<string, string>
-}> = Object.fromEntries(
-  Object.entries(officialHolidayPlan).map(([yearText, plan]) => {
-    const year = Number(yearText)
-    const workdays = [...plan.makeupWorkdays]
-    const restdays: string[] = []
-    const tags: Record<string, string> = {}
-    for (const item of plan.holidays) {
-      const start = new Date(`${item.start}T00:00:00`)
-      const end = new Date(`${item.end}T00:00:00`)
-      for (let t = start.getTime(); t <= end.getTime(); t += 24 * 3600 * 1000) {
-        const d = new Date(t)
-        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-        restdays.push(key)
-        tags[key] = item.name
-      }
-    }
-    for (const d of workdays) tags[d] = '补班'
-    return [year, { workdays, restdays, tags }]
-  })
-)
 const locationDialogVisible = ref(false)
 const wifiDialogVisible = ref(false)
 const locationDraft = ref({
@@ -3841,7 +3828,27 @@ const nowDate = new Date()
 const holidayCalendarYear = ref(nowDate.getFullYear())
 const holidayCalendarMonth = ref(nowDate.getMonth() + 1)
 const holidayCalendarLoading = ref(false)
-const holidayCalendarServerMap = ref<Record<string, { dayType: 'work' | 'rest', tag: string }>>({})
+type HolidayRow = { date: string | null, holiday_name: string }
+const holidayDraft = ref<HolidayRow[]>([])
+const holidayOriginal = ref<HolidayRow[]>([])
+const holidayRevision = ref(0)
+const holidaySource = ref('empty')
+const holidayLoadError = ref(false)
+const holidaySaving = ref(false)
+let holidayLoadSequence = 0
+const canEditLegalHolidays = computed(() => isWebAuthSuperuser() || getWebAuthRoles().includes('admin'))
+const normalizeHolidayRows = (rows: HolidayRow[]) => rows.map(row => ({ date: String(row.date || ''), holiday_name: row.holiday_name.trim() })).sort((a, b) => a.date.localeCompare(b.date) || a.holiday_name.localeCompare(b.holiday_name))
+const holidayDirty = computed(() => JSON.stringify(normalizeHolidayRows(holidayDraft.value)) !== JSON.stringify(normalizeHolidayRows(holidayOriginal.value)))
+const holidaySourceText = computed(() => {
+  const labels: Record<string, string> = { default: '公司提供的初始表', configured: '管理员维护的年度节假日表', empty: '本年尚未配置节假日' }
+  return labels[holidaySource.value] || '公司年度节假日表'
+})
+const beijingToday = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date())
+const holidayPastDatesChanged = computed(() => {
+  const today = beijingToday()
+  const past = (rows: HolidayRow[]) => normalizeHolidayRows(rows).filter(row => row.date && row.date < today)
+  return JSON.stringify(past(holidayDraft.value)) !== JSON.stringify(past(holidayOriginal.value))
+})
 const specialDateDialogVisible = ref(false)
 const specialDateMode = ref<'must' | 'no'>('must')
 const specialDateDraft = ref<any>({
@@ -4138,7 +4145,7 @@ const defaultRuleExtra = () => ({
   overtime_unit: '小时',
   overtime_rounding_rule: '时长按照「四舍五入」计算，保留至1位小数',
   overtime_unit_convert: '1天 = 8小时',
-  holiday_plan: '国家标准',
+  holiday_plan: '公司节假日表',
   locations: [] as Array<{ name: string, radius: number, latitude?: number, longitude?: number }>,
   wifi_list: [] as Array<{ name: string, bssid?: string }>,
 })
@@ -4823,108 +4830,104 @@ const workCalendarCells = computed(() => {
   return cells
 })
 
-const holidayYearOptions = computed(() => {
-  const current = new Date().getFullYear()
-  return [current - 1, current, current + 1, current + 2]
-})
+const holidayYearOptions = Array.from({ length: 201 }, (_, i) => 1900 + i)
+
+function weekdayForHoliday(value: string | null) {
+  if (!value) return '—'
+  const day = new Date(`${value}T12:00:00`).getDay()
+  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][day] || '—'
+}
+function isOutsideHolidayYear(value: Date) { return value.getFullYear() !== holidayCalendarYear.value }
 
 const holidayCalendarCells = computed(() => {
-  const year = holidayCalendarYear.value
-  const month = holidayCalendarMonth.value
-  const firstDay = new Date(year, month - 1, 1)
-  const monthStartMonday = mondayStart(firstDay)
-  const nextMonthFirstDay = new Date(year, month, 1)
-  const lastDay = new Date(nextMonthFirstDay.getTime() - 24 * 3600 * 1000)
-  const monthEndSunday = new Date(mondayStart(lastDay).getTime() + 6 * 24 * 3600 * 1000)
-  const today = new Date()
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-  const preset = holidayPresetMap[year] || { workdays: [], restdays: [], tags: {} as Record<string, string> }
-  const workdaySet = new Set(preset.workdays)
-  const restdaySet = new Set(preset.restdays)
-  const serverMap = holidayCalendarServerMap.value || {}
-  const cells: Array<{
-    key: string
-    day: number
-    inMonth: boolean
-    isToday: boolean
-    dayType: 'work' | 'rest'
-    tag: string
-  }> = []
-  for (let t = monthStartMonday.getTime(); t <= monthEndSunday.getTime(); t += 24 * 3600 * 1000) {
-    const d = new Date(t)
+  const year = holidayCalendarYear.value, month = holidayCalendarMonth.value
+  const start = mondayStart(new Date(year, month - 1, 1))
+  const end = new Date(mondayStart(new Date(year, month, 0)).getTime() + 6 * 86400000)
+  const today = beijingToday()
+  const names = new Map(holidayDraft.value.filter(row => row.date).map(row => [row.date, row.holiday_name]))
+  const cells: Array<{ key: string, day: number, inMonth: boolean, isToday: boolean, dayType: 'work' | 'rest', tag: string }> = []
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    const weekday = d.getDay()
-    const isWeekend = weekday === 0 || weekday === 6
-    let dayType: 'work' | 'rest' = isWeekend ? 'rest' : 'work'
-    if (workdaySet.has(key)) dayType = 'work'
-    if (restdaySet.has(key)) dayType = 'rest'
-    const server = serverMap[key]
-    if (server) dayType = server.dayType
-    cells.push({
-      key,
-      day: d.getDate(),
-      inMonth: d.getMonth() === month - 1,
-      isToday: key === todayKey,
-      dayType,
-      tag: server?.tag || preset.tags[key] || '',
-    })
+    cells.push({ key, day: d.getDate(), inMonth: d.getMonth() === month - 1, isToday: key === today,
+      dayType: names.has(key) || d.getDay() === 0 || d.getDay() === 6 ? 'rest' : 'work', tag: names.get(key) || '' })
   }
   return cells
 })
 
 async function loadHolidayCalendarFromServer(year: number) {
+  const sequence = ++holidayLoadSequence
   holidayCalendarLoading.value = true
+  holidayLoadError.value = false
   try {
-    const rows = await get('/attendance/calendar', {
-      start_date: `${year}-01-01`,
-      end_date: `${year}-12-31`,
-    }).catch(() => [])
-    const list = Array.isArray(rows) ? rows : (rows?.items || rows?.data || [])
-    const mapped: Record<string, { dayType: 'work' | 'rest', tag: string }> = {}
-    for (const row of list) {
-      const key = String(row?.date || '').slice(0, 10)
-      if (!key) continue
-      const type = String(row?.day_type || '')
-      if (type === 'holiday') {
-        mapped[key] = { dayType: 'rest', tag: normalizeHolidayCalendarTag(row?.holiday_name) || '法定节假日' }
-      } else if (type === 'special_workday') {
-        mapped[key] = { dayType: 'work', tag: normalizeHolidayCalendarTag(row?.holiday_name) || '补班' }
-      } else if (type === 'weekend') {
-        mapped[key] = { dayType: 'rest', tag: normalizeHolidayCalendarTag(row?.holiday_name) || '' }
-      } else if (type === 'workday') {
-        mapped[key] = { dayType: 'work', tag: normalizeHolidayCalendarTag(row?.holiday_name) || '' }
-      }
-    }
-    holidayCalendarServerMap.value = mapped
+    const result = await get(`/attendance/legal-holidays/${year}`)
+    if (sequence !== holidayLoadSequence) return
+    const rows: HolidayRow[] = (result.entries || []).map((row: any) => ({ date: row.date, holiday_name: row.holiday_name }))
+    holidayDraft.value = rows
+    holidayOriginal.value = rows.map(row => ({ ...row }))
+    holidayRevision.value = result.revision
+    holidaySource.value = result.source
+  } catch {
+    if (sequence === holidayLoadSequence) { holidayLoadError.value = true; holidayDraft.value = []; holidayOriginal.value = [] }
   } finally {
-    holidayCalendarLoading.value = false
+    if (sequence === holidayLoadSequence) holidayCalendarLoading.value = false
   }
 }
-
+async function confirmDiscardHolidayChanges() {
+  if (holidaySaving.value || holidayCalendarLoading.value) return false
+  if (!holidayDirty.value) return true
+  try { await ElMessageBox.confirm('节假日表有尚未保存的修改，是否放弃？', '未保存的修改', { confirmButtonText: '放弃修改', cancelButtonText: '继续编辑', type: 'warning' }); return true } catch { return false }
+}
+async function beforeCloseHolidayCalendar(done: () => void) { if (await confirmDiscardHolidayChanges()) done() }
+async function changeHolidayYear(year: number) {
+  if (year === holidayCalendarYear.value) return true
+  if (!await confirmDiscardHolidayChanges()) return false
+  holidayCalendarYear.value = year
+  await loadHolidayCalendarFromServer(year)
+  return true
+}
+async function reloadHolidayYear() { if (await confirmDiscardHolidayChanges()) await loadHolidayCalendarFromServer(holidayCalendarYear.value) }
+function addHolidayRow() { holidayDraft.value.push({ date: '', holiday_name: '' }) }
+async function removeHolidayRow(index: number) {
+  try { await ElMessageBox.confirm('从本年节假日表中删除这一行？保存后生效。', '删除节假日', { type: 'warning' }); holidayDraft.value.splice(index, 1) } catch {}
+}
+async function saveHolidayYear() {
+  if (!canEditLegalHolidays.value || holidaySaving.value || holidayLoadError.value) return
+  const entries = normalizeHolidayRows(holidayDraft.value)
+  if (entries.some(row => !/^\d{4}-\d{2}-\d{2}$/.test(row.date) || Number(row.date.slice(0, 4)) !== holidayCalendarYear.value || !row.holiday_name || row.holiday_name.length > 100)) {
+    ElMessage.warning('请填写本年内的日期和 1 至 100 字的节日名称'); return
+  }
+  if (new Set(entries.map(row => row.date)).size !== entries.length) { ElMessage.warning('同一天不能重复录入'); return }
+  if (holidayPastDatesChanged.value) {
+    try { await ElMessageBox.confirm('修改包含过去日期，已生成的考勤、审批和汇总不会自动重算。确认保存？', '确认修改过去日期', { type: 'warning' }) } catch { return }
+  }
+  holidaySaving.value = true
+  try {
+    const result = await put(`/attendance/legal-holidays/${holidayCalendarYear.value}`, { entries, expected_revision: holidayRevision.value })
+    holidayDraft.value = result.entries.map((row: HolidayRow) => ({ ...row }))
+    holidayOriginal.value = result.entries.map((row: HolidayRow) => ({ ...row }))
+    holidayRevision.value = result.revision
+    holidaySource.value = result.source
+    ElMessage.success('节假日表已保存')
+  } catch (error: any) {
+    ElMessage.error(error?.response?.status === 409 ? '其他管理员已修改本表，请重新加载后再编辑；当前修改仍保留。' : '节假日表保存失败，请重试')
+  } finally { holidaySaving.value = false }
+}
 async function openHolidayCalendar() {
-  const now = new Date()
-  holidayCalendarYear.value = now.getFullYear()
-  holidayCalendarMonth.value = now.getMonth() + 1
+  const [year, month] = beijingToday().split('-').map(Number)
+  holidayCalendarYear.value = year
+  holidayCalendarMonth.value = month
   holidayCalendarVisible.value = true
-  await loadHolidayCalendarFromServer(holidayCalendarYear.value)
+  await loadHolidayCalendarFromServer(year)
 }
-
-function goToCurrentHolidayMonth() {
-  const now = new Date()
-  holidayCalendarYear.value = now.getFullYear()
-  holidayCalendarMonth.value = now.getMonth() + 1
+async function goToCurrentHolidayMonth() {
+  const [year, month] = beijingToday().split('-').map(Number)
+  if (await changeHolidayYear(year)) holidayCalendarMonth.value = month
 }
-
-function switchHolidayMonth(step: number) {
+async function switchHolidayMonth(step: number) {
   const next = new Date(holidayCalendarYear.value, holidayCalendarMonth.value - 1 + step, 1)
-  holidayCalendarYear.value = next.getFullYear()
-  holidayCalendarMonth.value = next.getMonth() + 1
+  if (next.getFullYear() < 1900 || next.getFullYear() > 2100) return
+  if (await changeHolidayYear(next.getFullYear())) holidayCalendarMonth.value = next.getMonth() + 1
 }
-
-watch(holidayCalendarYear, (year) => {
-  if (!holidayCalendarVisible.value) return
-  loadHolidayCalendarFromServer(year)
-})
 
 watch(shiftArrangeMonth, () => {
   if (!shiftArrangeDialogVisible.value) return
@@ -5724,7 +5727,8 @@ function openRuleDialog(row?: any) {
   copySegmentDialogVisible.value = false
   workCalendarPreviewVisible.value = false
   holidayCalendarVisible.value = false
-  holidayCalendarServerMap.value = {}
+  holidayDraft.value = []
+  holidayOriginal.value = []
   holidayCalendarLoading.value = false
   specialDateDialogVisible.value = false
   shiftTemplateDialogVisible.value = false
@@ -9124,11 +9128,27 @@ onBeforeUnmount(() => {
   margin-right: 8px;
   vertical-align: middle;
 }
+.holiday-editor-header, .holiday-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.holiday-editor-header { justify-content: space-between; margin: 18px 0 12px; }
+.holiday-editor-count { margin-left: 12px; color: #7a8799; font-size: 13px; }
+.holiday-editor-alert { margin: 12px 0; }
+.holiday-editor-readonly { color: #7a8799; font-size: 13px; }
+.holiday-preview-heading { margin-top: 22px; font-weight: 600; }
+.holiday-preview-heading span { margin-left: 12px; font-size: 12px; font-weight: 400; color: #7a8799; }
+.holiday-date-picker { width: 160px !important; }
+.holiday-editor-table :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px #e4e7ed inset; }
+.holiday-editor-table :deep(.cell) { padding-top: 5px; padding-bottom: 5px; }
 .holiday-calendar-dialog :deep(.el-dialog__body) {
   padding-top: 16px;
 }
 .holiday-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;

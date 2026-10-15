@@ -21,8 +21,8 @@
         <el-table-column label="参与人员" width="100"><template #default="{row}">{{row.member_count || 0}} 人</template></el-table-column>
         <el-table-column label="操作" width="115" fixed="right"><template #default="{row}"><el-button link type="primary" @click.stop="openProject(row)">{{canManage(row) ? '配置项目' : '查看项目'}}</el-button></template></el-table-column>
       </el-table>
-      <el-pagination v-model:current-page="page" :page-size="12" :total="rows.length" layout="prev, pager, next" class="pagination"/>
-      <p class="muted">项目资料来自 Tegene；考勤规则统一在「考勤管理 → 考勤规则」中配置，项目直接选用。</p>
+      <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="rows.length" layout="prev, pager, next" class="pagination"/>
+      <p class="muted">每页 50 行。项目资料来自 Tegene；考勤规则统一在「考勤管理 → 考勤规则」中配置，项目直接选用。</p>
     </section>
 
     <el-drawer v-model="visible" :title="canManage(selected) ? '项目配置' : '项目详情'" size="min(860px, 96vw)" :close-on-click-modal="!saving">
@@ -91,6 +91,7 @@ import {useRouter} from 'vue-router'
 import {get, post, put} from '@/utils/request'
 import {ElMessage, ElMessageBox} from 'element-plus'
 const router = useRouter()
+const PAGE_SIZE = 50
 const data = ref<any>({projects:[], assignments:[], people:[], rules:[], managed_project_ids:[]})
 const loading=ref(false), saving=ref(false), error=ref(''), sourceError=ref(''), sourceLoading=ref(false), sourceConfigured=ref<boolean|null>(null)
 const sourceProjects=ref<any[]>([]), query=ref(''), stage=ref('all'), page=ref(1), visible=ref(false), selected=ref<any>(null), formError=ref(''), showHistory=ref(false)
@@ -105,7 +106,7 @@ const catalog=computed(()=>{
   return [...sourceProjects.value.map(p=>({...data.value.projects.find((local:any)=>local.id===p.local_project_id), external_id:p.id, code:p.projectNo, name:p.name})), ...data.value.projects.filter((p:any)=>!ids.has(p.id))]
 })
 const rows=computed(()=>catalog.value.filter((p:any)=>(stage.value==='all' || (stage.value==='ready' ? !!p.rule_id : !p.rule_id)) && [p.name,p.code,p.manager_name].join(' ').toLowerCase().includes(query.value.trim().toLowerCase())))
-const pagedRows=computed(()=>rows.value.slice((page.value-1)*12,page.value*12))
+const pagedRows=computed(()=>rows.value.slice((page.value-1)*PAGE_SIZE,page.value*PAGE_SIZE))
 const localProject=computed(()=>data.value.projects.find((p:any)=>p.id===selected.value?.id))
 const members=computed(()=>data.value.assignments.filter((a:any)=>a.project_id===selected.value?.id && (showHistory.value || a.is_current)))
 const managers=computed(()=>{
@@ -152,6 +153,7 @@ function selectMemberFile(event:Event){memberFile.value=(event.target as HTMLInp
 function downloadMemberTemplate(){const url=URL.createObjectURL(new Blob(['\ufeff姓名,手机号\r\n'],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='项目人员模板.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 async function importMembers(preview:boolean){if(!memberFile.value)return;saving.value=true;formError.value='';try{const file=new FormData();file.append('file',memberFile.value);importReport.value=await post(`/field/projects/${selected.value.id}/members/import`,file,{params:{preview},timeout:300000});if(!preview){await loadLocal();importVisible.value=false;ElMessage.success('项目人员已导入')}}catch(e){formError.value=message(e)}finally{saving.value=false}}
 watch([query,stage],()=>page.value=1)
+watch(()=>rows.value.length,total=>{page.value=Math.min(page.value,Math.max(1,Math.ceil(total/PAGE_SIZE)))})
 onMounted(refresh)
 </script>
 <style scoped>

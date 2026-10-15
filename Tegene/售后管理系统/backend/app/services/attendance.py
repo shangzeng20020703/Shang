@@ -59,12 +59,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from fastapi import HTTPException
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session
-from app.core.sql_compat import order_by_nulls_last_desc
 from app.models.attendance import (
     AttendanceEffect,
     AttendanceMonthlyReportSnapshot,
@@ -115,49 +115,9 @@ from app.schemas.attendance import (
     WorkCalendarUpdate,
 )
 from app.schemas.approval import ApprovalInstanceCreate
+from app.services.legal_holidays import LegalHolidayService
 
 logger = logging.getLogger(__name__)
-
-
-OFFICIAL_HOLIDAY_PLANS: Dict[int, Dict[str, Any]] = {
-    # 国办发明电〔2024〕12号
-    2025: {
-        "holidays": [
-            ("元旦", date(2025, 1, 1), date(2025, 1, 1)),
-            ("春节", date(2025, 1, 28), date(2025, 2, 4)),
-            ("清明节", date(2025, 4, 4), date(2025, 4, 6)),
-            ("劳动节", date(2025, 5, 1), date(2025, 5, 5)),
-            ("端午节", date(2025, 5, 31), date(2025, 6, 2)),
-            ("国庆节/中秋节", date(2025, 10, 1), date(2025, 10, 8)),
-        ],
-        "makeup_workdays": {
-            date(2025, 1, 26),
-            date(2025, 2, 8),
-            date(2025, 4, 27),
-            date(2025, 9, 28),
-            date(2025, 10, 11),
-        },
-    },
-    # 国办发明电〔2025〕7号
-    2026: {
-        "holidays": [
-            ("元旦", date(2026, 1, 1), date(2026, 1, 3)),
-            ("春节", date(2026, 2, 15), date(2026, 2, 23)),
-            ("清明节", date(2026, 4, 4), date(2026, 4, 6)),
-            ("劳动节", date(2026, 5, 1), date(2026, 5, 5)),
-            ("端午节", date(2026, 6, 19), date(2026, 6, 21)),
-            ("中秋节", date(2026, 9, 25), date(2026, 9, 27)),
-            ("国庆节", date(2026, 10, 1), date(2026, 10, 7)),
-        ],
-        "makeup_workdays": {
-            date(2026, 2, 14),
-            date(2026, 2, 28),
-            date(2026, 5, 9),
-            date(2026, 9, 20),
-            date(2026, 10, 10),
-        },
-    },
-}
 
 
 class AttendanceRuleService:
@@ -5907,25 +5867,19 @@ class WorkCalendarService:
     - holiday: 法定节假日（加班系数 3.0）
     - special_workday: 调休工作日（如法定假期前的补班）
 
-    日类型查询优先级（三级回退）：
+    日类型查询优先级：
     1. 地点特定的日历条目（location_id = 指定地点）
-    2. 全局日历条目（location_id = NULL）
-    3. 国务院办公厅年度节假日安排
-    4. 按星期推断（周六/日 → weekend，否则 → workday）
+    2. 管理员维护的年度法定节假日清单（2026 默认采用公司提供的 11 天）
+    3. 按星期推断（周六/日 → weekend，否则 → workday）
+
+    2025 年及以前的全局 WorkCalendar 条目保留作历史兼容；2026 年起
+    不再使用其中的国务院放假、补班记录，避免覆盖管理员维护的清单。
     """
 
     @staticmethod
-    def _official_day_type(target_date: date) -> Optional[DayType]:
-        plan = OFFICIAL_HOLIDAY_PLANS.get(target_date.year)
-        if not plan:
-            return None
-        makeup_workdays = plan.get("makeup_workdays")
-        if isinstance(makeup_workdays, set) and target_date in makeup_workdays:
-            return DayType.special_workday
-        for _, start, end in plan.get("holidays", []):
-            if start <= target_date <= end:
-                return DayType.holiday
-        return None
+    def _validate_legacy_write(data: WorkCalendarCreate) -> None:
+        if data.location_id is None and data.date.year >= 2026:
+            raise HTTPException(409, "全局节假日请在年度节假日表中维护")
 
     @staticmethod
     async def create(db: AsyncSession, data: WorkCalendarCreate) -> WorkCalendar:
@@ -5939,6 +5893,7 @@ class WorkCalendarService:
         返回:
             已持久化的 WorkCalendar 对象
         """
+        WorkCalendarService._validate_legacy_write(data)
         entry = WorkCalendar(**data.model_dump())
         db.add(entry)
         await db.flush()
@@ -5959,6 +5914,8 @@ class WorkCalendarService:
         返回:
             已持久化的 WorkCalendar 对象列表（顺序与输入一致）
         """
+        for data in entries:
+            WorkCalendarService._validate_legacy_write(data)
         items: List[WorkCalendar] = []
         for data in entries:
             entry = WorkCalendar(**data.model_dump())
@@ -5997,10 +5954,16 @@ class WorkCalendarService:
                 WorkCalendar.date <= end_date,
             )
         )
+        # Legacy global rows from 2026 onward are superseded by legal_holidays_{year}.
+        stmt = stmt.where(
+            (WorkCalendar.date < date(2026, 1, 1)) | WorkCalendar.location_id.is_not(None)
+        )
         if location_id is not None:
             stmt = stmt.where(
                 (WorkCalendar.location_id == location_id) | (WorkCalendar.location_id.is_(None))
             )
+        else:
+            stmt = stmt.where(WorkCalendar.location_id.is_(None))
         stmt = stmt.order_by(WorkCalendar.date)
         result = await db.execute(stmt)
         return result.scalars().all()
@@ -6026,6 +5989,8 @@ class WorkCalendarService:
         entry = result.scalar_one_or_none()
         if entry is None:
             return None
+        if entry.location_id is None and entry.date.year >= 2026:
+            raise HTTPException(409, "全局节假日请在年度节假日表中维护")
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(entry, field, value)
         await db.flush()
@@ -6059,13 +6024,13 @@ class WorkCalendarService:
         db: AsyncSession, target_date: date, location_id: Optional[int] = None
     ) -> DayType:
         """
-        获取某一天的日类型，采用三级优先级回退策略。
+        获取某一天的日类型。
 
         查找逻辑：
         1. 若指定了 location_id，优先查该地点特定的日历条目（location_id 匹配）
-        2. 若没有地点特定条目，使用全局条目（location_id = NULL）
-        3. 若日历中没有任何条目，按国务院办公厅年度节假日安排兜底
-        4. 若无年度安排，再按星期推断（周六/日 = weekend，否则 = workday）
+        2. 2025 年及以前可读取历史全局 WorkCalendar 条目
+        3. 读取管理员维护的年度法定节假日清单
+        4. 清单未列日期按星期推断（周六/日 = weekend，否则 = workday）
 
         排序方式：location_id DESC NULLS LAST，即地点特定（非 NULL）条目排在前面。
 
@@ -6077,21 +6042,29 @@ class WorkCalendarService:
         返回:
             DayType 枚举值（workday / weekend / holiday / special_workday）
         """
-        stmt = select(WorkCalendar).where(WorkCalendar.date == target_date)
         if location_id is not None:
-            stmt = stmt.where(
-                (WorkCalendar.location_id == location_id) | (WorkCalendar.location_id.is_(None))
-            ).order_by(
-                # 地点特定优先
-                *order_by_nulls_last_desc(WorkCalendar.location_id)
+            result = await db.execute(
+                select(WorkCalendar).where(
+                    WorkCalendar.date == target_date,
+                    WorkCalendar.location_id == location_id,
+                ).limit(1)
             )
-        result = await db.execute(stmt.limit(1))
-        entry = result.scalar_one_or_none()
-        if entry:
-            return entry.day_type
-        official_day_type = WorkCalendarService._official_day_type(target_date)
-        if official_day_type is not None:
-            return official_day_type
+            entry = result.scalar_one_or_none()
+            if entry:
+                return entry.day_type
+        if target_date.year < 2026:
+            result = await db.execute(
+                select(WorkCalendar).where(
+                    WorkCalendar.date == target_date,
+                    WorkCalendar.location_id.is_(None),
+                ).limit(1)
+            )
+            entry = result.scalar_one_or_none()
+            if entry:
+                return entry.day_type
+        holidays = await LegalHolidayService.get_year(db, target_date.year)
+        if any(item.date == target_date for item in holidays.entries):
+            return DayType.holiday
         # 回退: 按星期推断
         return DayType.weekend if target_date.weekday() >= 5 else DayType.workday
 
