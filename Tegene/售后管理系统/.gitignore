@@ -26,3 +26,5 @@ deliverables/
 .DS_Store
 
 **/.ruff_cache/
+.playwright-cli/
+output/playwright/

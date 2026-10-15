@@ -22,6 +22,7 @@ from app.models.attendance import (
 )
 from app.models.business_event import BusinessEventConsumption, BusinessEventOutbox
 from app.models.employee import Employee, EmployeeStatus
+from app.models.organization import Location
 from app.models.leave import ApprovalStatus, HalfDay, LeaveBalance, LeaveRequest, LeaveType
 from app.schemas.approval import ApprovalActionRequest, ApprovalApplicationSubmit
 from app.schemas.attendance import MonthSummaryGenerateRequest
@@ -113,12 +114,17 @@ async def test_mobile_leave_approval_to_attendance_effect_and_summary(tmp_path: 
             sync_session.add_all([applicant, approver])
             sync_session.flush()
 
+            location = Location(name="请假联动测试地点")
+            sync_session.add(location)
+            sync_session.flush()
+            applicant.location_id = location.id
+
             current = month_start
             while current.month == 5:
                 sync_session.add(
                     WorkCalendar(
                         date=current,
-                        location_id=None,
+                        location_id=location.id,
                         day_type=DayType.workday if current == leave_day else DayType.weekend,
                     )
                 )
@@ -578,6 +584,11 @@ async def test_attendance_effects_without_clock_records_drive_daily_and_month_su
             sync_session.add(employee)
             sync_session.flush()
 
+            location = Location(name="审批效果测试地点")
+            sync_session.add(location)
+            sync_session.flush()
+            employee.location_id = location.id
+
             current = date(2026, 5, 1)
             while current.month == 5:
                 day_type = DayType.weekend
@@ -585,7 +596,7 @@ async def test_attendance_effects_without_clock_records_drive_daily_and_month_su
                     day_type = DayType.workday
                 elif current == overtime_day:
                     day_type = DayType.holiday
-                sync_session.add(WorkCalendar(date=current, location_id=None, day_type=day_type))
+                sync_session.add(WorkCalendar(date=current, location_id=location.id, day_type=day_type))
                 current += timedelta(days=1)
             sync_session.flush()
 
