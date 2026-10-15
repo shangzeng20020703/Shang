@@ -112,7 +112,7 @@ async def verify_application_scope(token, userid, member):
             branch = await provider_get("department/list", {"access_token": token, "id": department})
             if own_departments & {str(d["id"]) for d in branch.get("department", [])}:
                 return
-    raise HTTPException(403, "你不在售后管理系统企微应用的可见范围内，请联系管理员")
+    raise HTTPException(403, "你不在售后打卡系统企微应用的可见范围内，请联系管理员")
 
 
 async def complete(db, client, state, verifier, code):

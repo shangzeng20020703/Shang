@@ -12,10 +12,10 @@
       :class="{ 'is-collapsed': isCollapsed, 'is-mobile-open': isMobile && mobileSidebarOpen }"
     >
       <!-- Logo Area -->
-      <div class="sidebar-logo">
-        <div class="logo-badge">售后</div>
+      <div class="sidebar-logo" aria-label="售后打卡系统">
+        <img class="logo-badge" src="/brand-mark.svg" alt="" aria-hidden="true" />
         <transition name="fade">
-          <span v-if="!isCollapsed" class="logo-text">售后管理系统</span>
+          <span v-if="!isCollapsed" class="logo-text">售后打卡系统</span>
         </transition>
       </div>
 
@@ -73,7 +73,7 @@
             <el-icon :size="20"><Operation /></el-icon>
           </button>
           <div v-if="isMobile" class="mobile-page-meta">
-            <span class="mobile-page-label">售后管理系统</span>
+            <span class="mobile-page-label">售后打卡系统</span>
             <strong class="mobile-page-title">{{ currentPageTitle || '首页' }}</strong>
           </div>
           <el-breadcrumb v-else separator="/">
@@ -427,15 +427,8 @@ watch(isMobile, (mobile) => {
 .logo-badge {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #818CF8, #6366F1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #FFFFFF;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 1px;
+  display: block;
+  border-radius: 9px;
   flex-shrink: 0;
 }
 

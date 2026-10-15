@@ -24,7 +24,7 @@
             </div>
           </el-tooltip>
         </div>
-        <el-empty v-else description="暂无项目" :image-size="80" />
+        <el-empty v-else :description="query.trim() ? '未找到匹配的已安排项目' : '当日暂无人员安排'" :image-size="80" />
       </section>
     </template>
   </div>
@@ -36,7 +36,7 @@ import { get } from '@/utils/request'
 type Project = {id:number;name:string;people:number;members:{id:number;name:string}[]}
 type Dashboard = {people_total:number;assigned_people:number;staffing:Project[]}
 const day=ref(''),data=ref<Dashboard|null>(null),loading=ref(false),error=ref(''),query=ref('')
-const projects=computed(()=>data.value?.staffing.filter(p=>p.name.includes(query.value.trim()))||[])
+const projects=computed(()=>data.value?.staffing.filter(p=>p.people>0&&p.name.includes(query.value.trim()))||[])
 const maxPeople=computed(()=>Math.max(1,...projects.value.map(p=>p.people)))
 const metrics=computed(()=>data.value?[
  {label:'总人员数',value:data.value.people_total,unit:'人'},

@@ -3,7 +3,7 @@
     <ion-content fullscreen class="app-gradient-page home-enterprise-page">
       <div class="mobile-shell home-enterprise-shell">
         <header class="home-app-head">
-          <h1>售后管理系统</h1>
+          <h1>售后打卡系统</h1>
           <button class="home-notification-button" type="button" aria-label="通知待办" @click="router.push('/app/notifications')">
             <ion-icon :icon="notificationsOutline" />
             <span v-if="notificationBadge">{{ notificationBadge }}</span>
