@@ -12,7 +12,8 @@
         </div>
 
         <div class="showcase-text">
-          <h1 class="showcase-title">售后管理系统</h1>
+          <img class="showcase-mark" src="/brand-mark.svg" alt="" aria-hidden="true" />
+          <h1 class="showcase-title">售后打卡系统</h1>
           <div class="showcase-divider"></div>
           <p class="showcase-desc">
             项目人员、打卡与考勤管理
@@ -26,6 +27,10 @@
     <div class="login-form-panel">
       <div class="login-form-wrapper">
         <div class="login-form-header" :class="{ 'animate-in': mounted }">
+          <div class="form-brand">
+            <img src="/brand-mark.svg" alt="" aria-hidden="true" />
+            <span>售后打卡系统</span>
+          </div>
           <h2 class="form-title">欢迎回来</h2>
         </div>
 
@@ -101,7 +106,7 @@
         </el-form>
 
         <div class="login-footer" :class="{ 'animate-in-delay-2': mounted }">
-          售后管理系统 &copy; 2026
+          售后打卡系统 &copy; 2026
         </div>
       </div>
     </div>
@@ -269,6 +274,14 @@ async function handleLogin() {
   z-index: 3;
 }
 
+.showcase-mark {
+  display: block;
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 20px;
+  border-radius: 17px;
+}
+
 .showcase-title {
   font-size: 48px;
   font-weight: 800;
@@ -380,6 +393,10 @@ async function handleLogin() {
 .login-form-header.animate-in {
   opacity: 1;
   transform: translateY(0);
+}
+
+.form-brand {
+  display: none;
 }
 
 .form-title {
@@ -619,6 +636,21 @@ async function handleLogin() {
 
   .login-form-wrapper {
     max-width: 360px;
+  }
+
+  .form-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 28px;
+    color: #1E293B;
+    font-size: 19px;
+    font-weight: 700;
+  }
+
+  .form-brand img {
+    width: 38px;
+    height: 38px;
   }
 
   .form-title {

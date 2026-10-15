@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(BACKEND_DIR / ".env"), case_sensitive=True, extra="ignore"
     )
-    PROJECT_NAME: str = "售后管理系统"
+    PROJECT_NAME: str = "售后打卡系统"
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: str = "development"

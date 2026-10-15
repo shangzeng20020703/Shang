@@ -13,7 +13,7 @@ const allowMixedContent = process.env.CAPACITOR_ANDROID_ALLOW_MIXED_CONTENT === 
 
 const config: CapacitorConfig = {
   appId: 'com.aftersales.fieldmanagement',
-  appName: '售后管理系统',
+  appName: '售后打卡系统',
   webDir: 'dist',
 }
 

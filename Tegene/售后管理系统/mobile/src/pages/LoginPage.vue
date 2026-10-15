@@ -3,10 +3,10 @@
     <ion-content fullscreen class="app-gradient-page">
       <div class="mobile-shell login-shell">
         <section class="hero-card login-hero">
-          <div class="login-hero__mark">S</div>
+          <img class="login-hero__mark" src="/brand-mark.svg" alt="" aria-hidden="true" />
           <div>
             <div class="hero-card__eyebrow">SERVICE / FIELD</div>
-            <div class="hero-card__title">售后管理系统</div>
+            <div class="hero-card__title">售后打卡系统</div>
             <div class="hero-card__desc">
               打卡、审批、假勤与消息集中处理。登录后会根据你的角色展示对应入口。
             </div>
@@ -212,14 +212,7 @@ onMounted(async () => {
   width: 54px;
   height: 54px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
-  font-weight: 900;
-  letter-spacing: 0.08em;
+  display: block;
 }
 
 .login-hero .hero-card__eyebrow {
