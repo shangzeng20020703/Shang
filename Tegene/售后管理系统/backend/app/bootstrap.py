@@ -33,7 +33,7 @@ async def initialize():
             # Retire legacy employment labels without unlocking any existing account.
             await db.execute(update(Employee).where(Employee.status.in_(["待入职", "停用"])).values(status="在职"))
             await db.execute(update(Employee).where(Employee.status == "试用期").values(status="试用"))
-        for version in (1, 2, 3, 4, 5, 6, 7, 8):
+        for version in (1, 2, 3, 4, 5, 6, 7, 8, 9):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

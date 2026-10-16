@@ -57,6 +57,7 @@ from app.models.employee_role import EmployeeRole
 from app.models.overtime import OvertimeRequest
 from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
+from app.models.rotation import RotationDay, RotationClaim, RotationAccount, RotationLedger
 from app.models.changelog import DepartmentChangeLog
 from app.models.notification import Notification
 from app.models.chat import (

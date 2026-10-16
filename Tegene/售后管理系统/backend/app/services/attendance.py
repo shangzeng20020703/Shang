@@ -133,6 +133,20 @@ class AttendanceRuleService:
     """
 
     @staticmethod
+    def _validate_rotation(extra):
+        if not isinstance(extra, dict) or extra.get("rule_type") != "rotation":
+            return
+        if extra.get("scope_mode") != "project":
+            raise ValueError("现场轮休仅适用于项目参与人员，请从项目库分配规则")
+        try:
+            mode = str(extra.get("free_work_hours_mode") or "")
+            hours = Decimal(mode.split(":", 1)[1]) if mode.startswith("limit:") else Decimal(0)
+            if not hours.is_finite() or not 0 < hours <= 24:
+                raise ValueError()
+        except (ValueError, ArithmeticError):
+            raise ValueError("现场轮休须设置大于0且不超过24小时的每日工时")
+
+    @staticmethod
     def _operator(current_user: Optional[Employee]) -> tuple[Optional[int], Optional[str]]:
         if not current_user:
             return None, "system"
@@ -409,6 +423,7 @@ class AttendanceRuleService:
             已持久化的 AttendanceRule 对象（含自增 id）
         """
         payload = data.model_dump()
+        AttendanceRuleService._validate_rotation(payload.get("extra_config"))
         conflicts = await AttendanceRuleService.detect_conflicts(db, payload)
         if conflicts:
             raise ValueError(f"规则冲突: {conflicts[0]['name']}（ID={conflicts[0]['id']}）")
@@ -488,6 +503,7 @@ class AttendanceRuleService:
         if rule is None:
             return None
         update_data = data.model_dump(exclude_unset=True)
+        AttendanceRuleService._validate_rotation(update_data.get("extra_config", rule.extra_config))
         merged = {
             "department_id": update_data.get("department_id", rule.department_id),
             "effective_date": update_data.get("effective_date", rule.effective_date),
@@ -1043,6 +1059,8 @@ class AttendanceRecordService:
     @staticmethod
     def _infer_rule_type(rule: Optional[AttendanceRule], extra: Dict[str, Any]) -> str:
         t = str(extra.get("rule_type") or "").strip()
+        if t == "rotation":
+            return "free"
         if t in ("fixed", "shift", "free"):
             return t
         work_hour_type = getattr(rule, "work_hour_type", None)
@@ -1682,10 +1700,14 @@ class AttendanceRecordService:
         extra = AttendanceRecordService._extra(rule)
         rule_type = AttendanceRecordService._infer_rule_type(rule, extra)
         segment = AttendanceRecordService._resolve_segment_for_date(rule, target_date)
+        if extra.get("rule_type") == "rotation":
+            segment = None
         if segment is None and rule_type == "free":
             free_days = AttendanceRecordService._parse_int_set(extra.get("free_workdays"))
             if not free_days:
                 free_days = {1, 2, 3, 4, 5}
+            if extra.get("rule_type") == "rotation":
+                free_days = set(range(1, 8))
             day_start_t = AttendanceRecordService._parse_hm(extra.get("free_day_start_time")) or time(hour=5, minute=0)
             day_start = AttendanceRecordService._to_hm_string(day_start_t)
             end_minutes = (day_start_t.hour * 60 + day_start_t.minute - 1) % (24 * 60)
@@ -1830,6 +1852,8 @@ class AttendanceRecordService:
             if segments:
                 runtime = segment_runtime(segments[0].rule_snapshot, target_date)
                 runtime.update(employee=employee, project_segments=[segment_view(s) for s in segments])
+                from app.services.rotation import apply_runtime
+                await apply_runtime(db, runtime, employee_id, target_date, segments[0].project_id)
                 return runtime
             from app.services.field_membership import day_runtime
             return await day_runtime(db, employee, target_date)
@@ -2441,6 +2465,8 @@ class AttendanceRecordService:
         管理端状态列需要展示“当天发生过的异常组合”，例如上班迟到且下班早退时显示
         “迟到/早退”。数据库 status 仍保留主状态，展示态在响应阶段计算。
         """
+        if (runtime or {}).get("rotation", {}).get("kind") == "pending":
+            return "待确认"
         if bool((runtime or {}).get("no_punch")):
             return "免打卡"
         status_text = AttendanceRecordService._status_label(record.status)
@@ -2622,6 +2648,10 @@ class AttendanceRecordService:
 
     @staticmethod
     def _attach_display_status(record: AttendanceRecord, runtime: Optional[Dict[str, Any]]) -> None:
+        if (runtime or {}).get("rotation", {}).get("kind") == "pending":
+            record.display_status = "待确认"
+            record.clock_in_status = record.clock_out_status = "待确认"
+            return
         if (runtime or {}).get("project_segments"):
             record.project_segments = runtime["project_segments"]
             record.display_status = "待核对" if any(s["needs_review"] for s in record.project_segments) else ("异常" if record.anomaly_type else "正常")
@@ -2895,6 +2925,7 @@ class AttendanceRecordService:
 
         return {
             **field_meta,
+            "rotation": runtime.get("rotation"),
             "date": target_date.isoformat(),
             "has_rule": True,
             "rule": {
@@ -3064,6 +3095,21 @@ class AttendanceRecordService:
         anomalies: Optional[List[str]] = None,
     ) -> None:
         if (runtime or {}).get("project_segments") and not (runtime or {}).get("field_segment"):
+            if (runtime or {}).get("rotation"):
+                from app.models.field_service import FieldAttendanceSegment
+                from app.services.field_membership import segment_runtime, restore, snapshot, rollup
+                from app.services.rotation import apply_runtime
+                segments = (await db.scalars(select(FieldAttendanceSegment).where(FieldAttendanceSegment.attendance_record_id == record.id))).all()
+                for segment in segments:
+                    piece_runtime = segment_runtime(segment.rule_snapshot, target_date)
+                    await apply_runtime(db, piece_runtime, employee_id, target_date, segment.project_id)
+                    piece_runtime.update(field_segment=True, employee=runtime.get("employee"))
+                    piece = restore(AttendanceRecord, segment.record_data)
+                    await AttendanceRecordService._recalculate_record_after_punch(db, piece, employee_id, target_date, piece_runtime)
+                    piece.anomaly_type = AttendanceRecordService._rebuild_anomaly_text_with_status(piece, piece_runtime)
+                    segment.record_data = {**segment.record_data, **snapshot(piece)}
+                await rollup(db, record)
+                return
             record.project_segments = runtime["project_segments"]
             issues = []
             for segment in record.project_segments:
@@ -3078,7 +3124,7 @@ class AttendanceRecordService:
         if rule is None:
             return
 
-        if bool((runtime or {}).get("no_punch")):
+        if bool((runtime or {}).get("no_punch")) and not (runtime or {}).get("rotation"):
             if anomalies is not None:
                 anomalies.clear()
             record.status = AttendanceStatus.normal
@@ -3442,6 +3488,9 @@ class AttendanceRecordService:
             return Decimal("0"), Decimal("0")
 
         if str(policy.get("convert_mode") or "comp_time") == "comp_time":
+            if extra_cfg.get("_rotation_original_rest") or extra_cfg.get("_rotation_pending"):
+                # These dates use the explicitly confirmed rotation ledger only.
+                return Decimal("0"), Decimal("0")
             try:
                 ratio = Decimal(str(policy.get("comp_time_ratio") or 1))
             except Exception:
@@ -4477,7 +4526,7 @@ class AttendanceRecordService:
             anomalies,
         )
 
-        current_anomalies = [] if bool((runtime or {}).get("no_punch")) else list(anomalies)
+        current_anomalies = [] if bool((runtime or {}).get("no_punch")) and not (runtime or {}).get("rotation") else list(anomalies)
         if (
             not bool((runtime or {}).get("no_punch"))
             and record.clock_in_time is None
@@ -6188,6 +6237,8 @@ class MonthSummaryService:
         )
         rule = runtime["rule"] if runtime else None
         day_type = await WorkCalendarService.get_day_type(db, target_date, location_id)
+        if (runtime or {}).get("rotation"):
+            return runtime["rotation"]["kind"] in {"work", "half_leave"}
         if bool((runtime or {}).get("no_punch")):
             return False
         if rule is None:
@@ -6424,6 +6475,11 @@ class MonthSummaryService:
             trip_d = Decimal("0")
             anomaly = 0
             current = first_day
+            from app.models.rotation import RotationDay
+            rotation_leave = {r.work_date: Decimal("1") if r.kind == "leave" else Decimal("0.5")
+                for r in (await db.execute(select(RotationDay).where(RotationDay.employee_id == emp_id,
+                    RotationDay.work_date >= first_day, RotationDay.work_date <= last_day,
+                    RotationDay.kind.in_(["leave", "half_leave"])))).scalars().all()}
             while current <= last_day:
                 should_work = await MonthSummaryService._expected_work_day(
                     db,
@@ -6436,9 +6492,16 @@ class MonthSummaryService:
                     work_days += 1
                 day_effects = effects_by_emp_date.get((emp_id, current), [])
                 leave_amount = MonthSummaryService._leave_effect_day_amount(day_effects)
+                leave_amount = max(leave_amount, rotation_leave.get(current, Decimal("0")))
                 has_trip_effect = MonthSummaryService._has_active_effect(day_effects, "business_trip")
                 outside_covers_day = MonthSummaryService._outside_effect_covers_day(day_effects)
                 record = rec_by_date.get(current)
+
+                if record is not None:
+                    day_runtime = await AttendanceRecordService._get_rule_runtime(db, emp_id, current, employee=employee)
+                    if (day_runtime or {}).get("rotation", {}).get("kind") == "pending":
+                        current += timedelta(days=1)
+                        continue
 
                 if leave_amount > 0:
                     leave_d += leave_amount
@@ -7520,6 +7583,8 @@ class AttendanceReportService:
         runtime: Optional[Dict[str, Any]],
         target_date: date,
     ) -> Decimal:
+        if (runtime or {}).get("rotation"):
+            return Decimal(str(runtime["rotation"].get("required_hours") or 0))
         if rule is not None and AttendanceRecordService._infer_rule_type(rule, (runtime or {}).get("extra") or AttendanceRecordService._extra(rule)) == "free":
             required = AttendanceRecordService._free_required_hours(rule, (runtime or {}).get("extra") or AttendanceRecordService._extra(rule))
             return required if required is not None else Decimal("0")
@@ -9309,6 +9374,9 @@ class AttendanceReportService:
             runtime = await _cached_runtime(emp_id, day, employee)
             rule = runtime.get("rule") if isinstance(runtime, dict) else None
             day_type = await _cached_day_type(employee.location_id, day)
+            if (runtime or {}).get("rotation"):
+                expected_day_cache[key] = runtime["rotation"]["kind"] in {"work", "half_leave"}
+                return expected_day_cache[key]
             if bool((runtime or {}).get("no_punch")):
                 expected_day_cache[key] = False
                 return False
@@ -9394,6 +9462,22 @@ class AttendanceReportService:
                 rule = runtime.get("rule") if isinstance(runtime, dict) else None
                 if first_rule is None and rule is not None:
                     first_rule = rule
+                rotation_kind = (runtime or {}).get("rotation", {}).get("kind")
+                if rotation_kind == "leave":
+                    leave_days += 1
+                    status_tokens.add("调休")
+                    detail_day_values[day_column["key"]] = AttendanceReportService._monthly_day_detail(
+                        records_by_emp_date.get((emp_id, day)), expected_work_day=False, status_text="调休", day_effects=[], leave_items=[], standard_minutes=0)
+                    continue
+                if rotation_kind == "half_leave":
+                    leave_days += 0.5
+                    status_tokens.add("半天调休")
+                if (runtime or {}).get("rotation", {}).get("kind") == "pending":
+                    status_tokens.add("待确认")
+                    pending_record = records_by_emp_date.get((emp_id, day))
+                    detail_day_values[day_column["key"]] = AttendanceReportService._monthly_day_detail(
+                        pending_record, expected_work_day=False, status_text="待确认", day_effects=[], leave_items=[], standard_minutes=0)
+                    continue
                 expected_work_day = await _cached_expected_work_day(employee, day)
                 standard_hours_for_day = Decimal("0")
                 if expected_work_day:

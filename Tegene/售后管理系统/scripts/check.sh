@@ -7,6 +7,7 @@ backend/.venv/bin/python scripts/test_integration.py
 backend/.venv/bin/python scripts/test_auth_roster.py
 backend/.venv/bin/python scripts/test_map_settings.py
 backend/.venv/bin/python scripts/test_legal_holidays.py
+backend/.venv/bin/python scripts/test_rotation.py
 backend/.venv/bin/python scripts/test_tegene_projects.py
 backend/.venv/bin/python scripts/test_project_membership.py
 backend/.venv/bin/python scripts/test_field_dashboard.py

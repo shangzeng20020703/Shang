@@ -4,7 +4,8 @@
 
 | 版本 | 来源提交 | 逐文件清单 | 状态 |
 |---|---|---|---|
-| [20261015-184321-CST-49f8eb8](versions/20261015-184321-CST-49f8eb8/) | `49f8eb8838b8e037a7e8f5184e277e1a837901bf` | [JSON](versions/manifests/20261015-184321-CST-49f8eb8.json) | 当前；50 行分页与管理员节假日表 |
+| [20261016-095417-CST-e18f737](versions/20261016-095417-CST-e18f737/) | `e18f73794f53be32cbc7870b027e1bb81d3014a2` | [JSON](versions/manifests/20261016-095417-CST-e18f737.json) | 当前；现场轮休与待休流水 |
+| [20261015-184321-CST-49f8eb8](versions/20261015-184321-CST-49f8eb8/) | `49f8eb8838b8e037a7e8f5184e277e1a837901bf` | [JSON](versions/manifests/20261015-184321-CST-49f8eb8.json) | 历史版本；50 行分页与管理员节假日表 |
 | [20261015-142156-CST-5939798](versions/20261015-142156-CST-5939798/) | `59397984c7807a8f57867882c0b0510f8f6ffa7a` | [JSON](versions/manifests/20261015-142156-CST-5939798.json) | 历史版本 |
 | [20261009-143452-CST-07d1e7e](versions/20261009-143452-CST-07d1e7e/) | `07d1e7e55800116ce07857873dd30bdff88d58a0` | [JSON](versions/manifests/20261009-143452-CST-07d1e7e.json) | 10 月 9 日基线 |
 

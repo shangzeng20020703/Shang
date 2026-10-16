@@ -136,6 +136,9 @@ async def day_runtime(db, person, day):
     runtime = attendance._build_runtime(rule, shift, day)
     attendance._apply_rule_runtime_people(runtime, person.id)
     runtime.update(employee=person, shift=shift, project_assigned=True)
+    from app.services.rotation import apply_runtime
+    project_id = site.project_id if row else None
+    await apply_runtime(db, runtime, person.id, day, project_id)
     return runtime
 
 
@@ -294,6 +297,10 @@ async def punch_context(db, employee_id, now=None):
     if not site.is_active or not project.is_active or not rule or not rule.is_active or rule.effective_date > now.astimezone(CST).date():
         return None
     day = now.astimezone(CST).date()
+    if (rule.extra_config or {}).get("rule_type") == "rotation":
+        cutoff = attendance._parse_hm((rule.extra_config or {}).get("free_day_start_time")) or time(5)
+        if now.astimezone(CST).time() < cutoff:
+            day -= timedelta(days=1)
     # Continue an overnight segment only within the same participation interval.
     previous = await db.scalar(select(FieldAttendanceSegment).where(FieldAttendanceSegment.membership_id == membership.id, FieldAttendanceSegment.work_date == day - timedelta(days=1)))
     if previous:
@@ -311,8 +318,10 @@ async def punch_context(db, employee_id, now=None):
     frozen = segment.rule_snapshot if segment else snapshot(rule)
     runtime = segment_runtime(frozen, day, now.astimezone(CST))
     attendance._apply_rule_runtime_people(runtime, employee_id)
+    from app.services.rotation import apply_runtime
+    await apply_runtime(db, runtime, employee_id, day, project.id)
     runtime.update(employee=person, field_segment=True)
-    revision = hashlib.sha256(json.dumps([membership.id, day.isoformat(), frozen], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    revision = hashlib.sha256(json.dumps([membership.id, day.isoformat(), frozen, runtime.get("rotation")], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     record = restore(AttendanceRecord, segment.record_data) if segment else AttendanceRecord(employee_id=employee_id, date=day,
         status=AttendanceStatus.normal, source=ClockSource.app, correction_status=CorrectionStatus.none,
         created_at=now, is_mock_location=False)
@@ -384,7 +393,8 @@ async def rollup(db, record):
             notes.append(f"{segment.project_name}：{issue}")
     record.anomaly_type = "; ".join(notes)[:200] or None
     record.project_segments = [segment_view(segment) for segment in segments]
-    record.display_status = "待核对" if any(segment.needs_review for segment in segments) else ("异常" if notes else "正常")
+    pending_rotation = any(((s.rule_snapshot.get("_runtime") or {}).get("rotation") or {}).get("kind") == "pending" for s in segments)
+    record.display_status = "待确认" if pending_rotation else ("待核对" if any(segment.needs_review for segment in segments) else ("异常" if notes else "正常"))
     return True
 
 
@@ -392,7 +402,10 @@ def segment_view(segment):
     from app.services.attendance import AttendanceRecordService
     rule = restore(AttendanceRule, segment.rule_snapshot)
     required = AttendanceRecordService._free_required_hours(rule)
-    return {**segment.record_data, "segment_id": segment.id, "project_id": segment.project_id,
+    rotation = (segment.rule_snapshot.get("_runtime") or {}).get("rotation")
+    if rotation:
+        required = Decimal(str(rotation.get("required_hours") or 0))
+    return {**segment.record_data, "rotation": rotation, "segment_id": segment.id, "project_id": segment.project_id,
             "project_name": segment.project_name, "rule_name": segment.rule_snapshot.get("name"),
             "needs_review": segment.needs_review, "required_work_hours": str(required) if required is not None else None,
             "display_status": "待核对" if segment.needs_review else segment.record_data.get("status")}

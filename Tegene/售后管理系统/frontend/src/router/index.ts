@@ -8,6 +8,7 @@ const router=createRouter({history:createWebHistory(),routes:[
 {path:'/',component:()=>import('@/views/LayoutView.vue'),redirect:'/dashboard',children:[
 {path:'dashboard',component:()=>import('@/views/FieldDashboard.vue'),meta:{title:'项目人员看板'}},
 {path:'field',component:()=>import('@/views/FieldView.vue'),meta:{title:'项目库'}},
+{path:'rotation',component:()=>import('@/views/RotationView.vue'),meta:{title:'现场轮休'}},
 {path:'employees',component:()=>import('@/views/FieldPeople.vue'),meta:{title:'人员花名册',roles:admin}},
 {path:'organization',component:()=>import('@/views/OrganizationView.vue'),meta:{title:'组织架构',roles:admin}},
 {path:'attendance',component:()=>import('@/views/AttendanceView.vue'),meta:{title:'考勤管理',roles:admin}},

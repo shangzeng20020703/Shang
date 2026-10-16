@@ -72,6 +72,12 @@ async def build_dashboard(db, user, day, project_id=None, include_trend=False):
         or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > FieldMembership.started_at),
     ))).all())
     employee_ids = {m.employee_id for m in intervals}
+    from app.models.rotation import RotationDay
+    from app.services.rotation import day_view
+    rotation_days = {(r.employee_id, r.work_date, r.project_id): r for r in (await db.scalars(
+        select(RotationDay).where(RotationDay.employee_id.in_(employee_ids), RotationDay.work_date >= first_day, RotationDay.work_date <= day))).all()}
+    site_rules = {s["id"]: s["rule_id"] for s in context["sites"]}
+    rules = {r["id"]: r for r in context["rules"]}
     # Detect all segments of a daily rollup, including those in an unselected project.
     segments = list((await db.scalars(select(FieldAttendanceSegment).where(
         FieldAttendanceSegment.employee_id.in_(employee_ids),
@@ -102,10 +108,15 @@ async def build_dashboard(db, user, day, project_id=None, include_trend=False):
             ) else None
             values = segment_view(segment) if segment else as_dict(legacy) if legacy else {}
             labels = anomaly_labels(values)
+            rotation_day = rotation_days.get((interval.employee_id, work_day, assignment["project_id"]))
+            rule = rules.get(site_rules.get(assignment["site_id"]), {})
+            frozen_type = ((segment.rule_snapshot.get("extra_config") or {}).get("rule_type") if segment else rule.get("rule_type"))
+            rotation_state = day_view(rotation_day) if rotation_day else ({"kind":"pending", "label":"待确认"} if frozen_type == "rotation" and str(rule.get("effective_date") or "") <= str(work_day) else None)
+            rotation_label = rotation_state.get("label") if rotation_state else None
             rows.append({**assignment, "work_date": work_day,
                 "project_name": segment.project_name if segment else assignment["project_name"],
                 "clock_in_time": values.get("clock_in_time"), "clock_out_time": values.get("clock_out_time"),
-                "status": "待核对" if values.get("needs_review") else values.get("status", "未打卡"),
+                "status": "待确认" if rotation_label == "待确认" else (rotation_label if rotation_state and rotation_state["kind"] in {"rest", "leave"} and not values.get("clock_in_time") else ("待核对" if values.get("needs_review") else values.get("status", "未打卡"))),
                 "anomaly_type": "; ".join(filter(None, [values.get("anomaly_type"), "项目结束时缺卡，待核对" if values.get("needs_review") else None])) or ("、".join(labels) or None),
                 "anomaly_labels": labels, "work_hours": values.get("work_hours"), "rule_name": values.get("rule_name"),
                 "record_id": segment.attendance_record_id if segment else legacy.id if legacy else None,
