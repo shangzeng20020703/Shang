@@ -89,7 +89,7 @@ async def main():
             assert response.status_code == status, response.text
             return response.json()
         result = await get()
-        assert result['people_total'] == 2  # Ordinary staff and probation only; management and departed excluded.
+        assert result['people_total'] == 3  # Project leader also clocks in; regional/aftersales management does not.
         assert result['summary']['people'] == 3 and len(result['rows']) == 4
         assert result['summary']['punched'] == 1 and result['summary']['partial'] == 1
         assert result['summary']['complete'] == 0 and result['summary']['unpunched'] == 2
@@ -107,8 +107,8 @@ async def main():
         with patch('app.services.field_dashboard.clock_now', return_value=start+timedelta(hours=14)):
             current = await get()
             staffing = {p['id']:p for p in current['staffing']}
-            assert current['assigned_people'] == 2
-            assert [m['name'] for m in staffing[project_id]['members']] == ['未打卡人员']
+            assert current['assigned_people'] == 3
+            assert {m['name'] for m in staffing[project_id]['members']} == {'未打卡人员', manager.name}
             assert [m['name'] for m in staffing[other_id]['members']] == [staff.name]
             assert all(p['people'] == len(p['members']) for p in current['staffing'])
             manager_current = await get('manager')
@@ -123,7 +123,7 @@ async def main():
         await get('manager', status=404, project_id=other_id)
         await get('staff', status=403)
         empty = await get(day=str(day-timedelta(days=30)))
-        assert empty['summary']['people'] == 0 and empty['summary']['abnormal'] == 0 and empty['people_total'] == 2
+        assert empty['summary']['people'] == 0 and empty['summary']['abnormal'] == 0 and empty['people_total'] == 3
         assert empty['assigned_people'] == 0 and all(p['people'] == 0 for p in empty['staffing'])
         assert empty['rows'] == [] and all(p['punched'] == 0 for p in empty['trend'])
     assert anomaly_labels({'status':AttendanceStatus.late}) == ['迟到']

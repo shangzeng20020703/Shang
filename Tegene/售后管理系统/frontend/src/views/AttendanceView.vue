@@ -3,13 +3,13 @@
     <!-- Page Header -->
     <div class="page-header">
       <div class="page-header__left">
-        <h1 class="page-title">考勤管理</h1>
-        <p class="page-desc">管理考勤打卡，实时掌握员工出勤状况</p>
+        <h1 class="page-title">{{projectRuleMode?'项目专用考勤规则':'考勤管理'}}</h1>
+        <p class="page-desc">{{projectRuleMode?'仅修改当前项目；保存后生成专用规则版本':'管理考勤打卡，实时掌握员工出勤状况'}}</p>
       </div>
     </div>
 
     <!-- Summary Stat Cards -->
-    <div class="stat-cards">
+    <div v-if="!projectRuleMode" class="stat-cards">
       <div class="stat-card">
         <div class="stat-card__icon" style="background: rgba(79,70,229,0.1);">
           <el-icon :size="24" color="#4F46E5"><UserFilled /></el-icon>
@@ -51,7 +51,7 @@
       </div>
     </div>
 
-    <div class="trend-cards">
+    <div v-if="!projectRuleMode" class="trend-cards">
       <el-card class="trend-card" shadow="never">
         <template #header><span>近7日出勤趋势</span></template>
         <VChart :option="presentTrendOption" style="height: 180px" autoresize />
@@ -70,12 +70,12 @@
     <div class="content-card">
       <el-tabs v-model="activeTab" class="custom-tabs" @tab-change="handleTabChange">
         <!-- Tab: 打卡记录 -->
-        <el-tab-pane label="打卡记录" name="records">
+        <el-tab-pane v-if="!projectRuleMode" label="打卡记录" name="records">
           <div class="quick-filter-row">
             <el-tag :effect="quickFilter === 'all' ? 'dark' : 'plain'" round @click="applyQuickFilter('all')">全部</el-tag>
             <el-tag :effect="quickFilter === 'today_anomaly' ? 'dark' : 'plain'" round type="danger" @click="applyQuickFilter('today_anomaly')">今日异常</el-tag>
             <el-tag :effect="quickFilter === 'week_late' ? 'dark' : 'plain'" round type="warning" @click="applyQuickFilter('week_late')">本周迟到</el-tag>
-            <el-tag :effect="quickFilter === 'pending_appeal' ? 'dark' : 'plain'" round type="warning" @click="applyQuickFilter('pending_appeal')">待处理申诉</el-tag>
+            <el-tag v-if="canManageGlobalRules" :effect="quickFilter === 'pending_appeal' ? 'dark' : 'plain'" round type="warning" @click="applyQuickFilter('pending_appeal')">待处理申诉</el-tag>
           </div>
 
           <div class="filter-row">
@@ -142,8 +142,8 @@
 
           <div v-if="selectedRecordRows.length" class="batch-toolbar">
             <span>已选 {{ selectedRecordRows.length }} 条</span>
-            <el-button size="small" @click="batchMarkAsNormal">批量标记为正常</el-button>
-            <el-button size="small" type="warning" @click="batchApproveAppeal">批量通过申诉</el-button>
+            <el-button v-if="canManageGlobalRules" size="small" @click="batchMarkAsNormal">批量标记为正常</el-button>
+            <el-button v-if="canManageGlobalRules" size="small" type="warning" @click="batchApproveAppeal">批量通过申诉</el-button>
             <el-button size="small" type="success" @click="batchExportAnomalies">批量导出异常</el-button>
           </div>
 
@@ -198,7 +198,7 @@
             <el-table-column label="操作" width="220">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="openRecordDetail(row)">查看详情</el-button>
-                <el-button v-if="isExceptionStatus(row.display_status)" link type="warning" size="small" @click="handleSingleAbnormal(row)">处理异常</el-button>
+                <el-button v-if="canManageGlobalRules && isExceptionStatus(row.display_status)" link type="warning" size="small" @click="handleSingleAbnormal(row)">处理异常</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -218,7 +218,7 @@
         </el-tab-pane>
 
         <!-- Tab: 打卡时间记录 -->
-        <el-tab-pane label="打卡时间记录" name="punch-time-records">
+        <el-tab-pane v-if="!projectRuleMode" label="打卡时间记录" name="punch-time-records">
           <section class="punch-time-record-panel">
             <header class="punch-time-record-title">
               <h3>打卡时间记录</h3>
@@ -323,18 +323,17 @@
         </el-tab-pane>
 
         <!-- Tab: 考勤规则 -->
-        <el-tab-pane label="考勤规则" name="rules">
-          <el-alert title="统一维护项目考勤规则" type="info" :closable="false" show-icon style="margin-bottom:16px">
-            在这里配置上下班时间、定位 / WiFi 和照片要求；项目库直接选用已启用的规则，无需重复录入。
-            修改共用规则会影响所有引用它的项目；只调整一个项目时，请复制规则后再关联。
-            <router-link to="/field">前往项目库</router-link>
+        <el-tab-pane v-if="projectRuleMode || canManageGlobalRules" :label="projectRuleMode?'项目专用规则':'考勤规则'" name="rules">
+          <el-alert :title="projectRuleMode?'当前项目规则':'统一维护项目考勤规则'" type="info" :closable="false" show-icon style="margin-bottom:16px">
+            <template v-if="projectRuleMode">这里编辑项目 {{projectRuleId}} 的规则。保存后生成该项目的专用版本，其他项目的规则保持原样。</template>
+            <template v-else>在这里配置上下班时间、定位 / WiFi 和照片要求；项目库直接选用已启用的规则。<router-link to="/field">前往项目库</router-link></template>
           </el-alert>
           <div class="filter-row">
-            <el-button @click="openHolidayCalendar"><el-icon><Calendar /></el-icon> 节假日表</el-button>
-            <el-button type="primary" @click="openRuleDialog()">
+            <el-button v-if="canManageGlobalRules" @click="openHolidayCalendar"><el-icon><Calendar /></el-icon> 节假日表</el-button>
+            <el-button v-if="!projectRuleMode" type="primary" @click="openRuleDialog()">
               <el-icon><Plus /></el-icon> 新增规则
             </el-button>
-            <el-select v-model="ruleStatusFilter" placeholder="规则状态" clearable style="width: 140px" @change="fetchRules">
+            <el-select v-if="!projectRuleMode" v-model="ruleStatusFilter" placeholder="规则状态" clearable style="width: 140px" @change="fetchRules">
               <el-option label="启用" :value="true" />
               <el-option label="停用" :value="false" />
             </el-select>
@@ -385,7 +384,7 @@
             </el-table-column>
             <el-table-column label="状态" width="120" align="center">
               <template #default="{ row }">
-                <el-switch
+                <el-switch v-if="!projectRuleMode"
                   :model-value="!!row.is_active"
                   inline-prompt
                   active-text="启用"
@@ -397,15 +396,15 @@
             <el-table-column label="操作" width="260" fixed="right">
               <template #default="{ row }">
                 <el-button type="primary" link size="small" @click="openRuleDialog(row)">编辑</el-button>
-                <el-button type="success" link size="small" @click="copyRule(row)">复制</el-button>
-                <el-button type="info" link size="small" @click="openRuleLogs(row)">变更历史</el-button>
+                <el-button v-if="!projectRuleMode" type="success" link size="small" @click="copyRule(row)">复制</el-button>
+                <el-button v-if="!projectRuleMode" type="info" link size="small" @click="openRuleLogs(row)">变更历史</el-button>
               </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
 
         <!-- Tab: 考勤审批 -->
-        <el-tab-pane label="考勤审批" name="anomalies">
+        <el-tab-pane v-if="!projectRuleMode && canManageGlobalRules" label="考勤审批" name="anomalies">
           <div class="filter-row">
             <el-select v-model="appealSourceFilter" placeholder="分类" style="width: 140px">
               <el-option label="全部" value="all" />
@@ -481,7 +480,7 @@
         </el-tab-pane>
 
         <!-- Tab: 汇总报表 -->
-        <el-tab-pane label="汇总报表" name="reports">
+        <el-tab-pane v-if="!projectRuleMode" label="汇总报表" name="reports">
           <el-tabs v-model="reportTab" class="report-main-tabs" @tab-change="handleReportTabChange">
             <el-tab-pane label="日报汇总" name="daily-report">
           <div class="filter-row filter-row--daily">
@@ -1613,7 +1612,7 @@
       </el-form>
       <template #footer>
         <el-button @click="ruleDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="ruleSubmitting" @click="submitRule">{{ ruleForm.id ? '更新规则' : '确定' }}</el-button>
+        <el-button type="primary" :loading="ruleSubmitting" @click="submitRule">{{ projectRuleMode ? '保存本项目专用规则' : ruleForm.id ? '更新规则' : '确定' }}</el-button>
       </template>
     </el-dialog>
 
@@ -2647,7 +2646,7 @@
         <div class="detail-row"><span>设备信息</span><strong>{{ recordDetail.device_info || '-' }}</strong></div>
         <div class="detail-row"><span>打卡位置</span><strong>{{ recordDetail.clock_in_location || '-' }}</strong></div>
         <div class="detail-row"><span>历史异常</span><strong>{{ recordDetail.anomaly_type || '-' }}</strong></div>
-        <div v-if="isExceptionStatus(recordDetail.display_status)" class="record-detail-actions">
+        <div v-if="canManageGlobalRules && isExceptionStatus(recordDetail.display_status)" class="record-detail-actions">
           <div class="record-detail-actions__hint">
             <strong>处理异常</strong>
             <span>先确认打卡详情，再选择补卡、假勤或校准为正常。</span>
@@ -2738,7 +2737,10 @@ use([CanvasRenderer, BarChart, LineChart, PieChart, GridComponent, LegendCompone
 
 // ============ State ============
 const route = useRoute()
-const activeTab = ref(route.query.tab === 'rules' ? 'rules' : 'records')
+const projectRuleId = computed(() => Number(route.query.project_id || 0))
+const projectRuleMode = computed(() => Number.isInteger(projectRuleId.value) && projectRuleId.value > 0)
+const canManageGlobalRules = computed(() => isWebAuthSuperuser() || getWebAuthRoles().some(role => ['admin','hr'].includes(role)))
+const activeTab = ref(route.query.tab === 'rules' || projectRuleMode.value ? 'rules' : 'records')
 watch(() => route.query.tab, tab => {
   if (tab === 'rules') { activeTab.value = 'rules'; fetchRules() }
 })
@@ -5706,6 +5708,16 @@ function removeWifi(index: number) {
 async function fetchRules() {
   ruleLoading.value = true
   try {
+    if (projectRuleMode.value) {
+      const rule = await get(`/attendance/projects/${projectRuleId.value}/rule`)
+      rules.value = rule ? [normalizeRule(rule)] : []
+      return
+    }
+    if (!canManageGlobalRules.value) {
+      const directory = await get('/field/directory')
+      rules.value = (directory.rules || []).map((row: any) => normalizeRule({ ...row, extra_config: { rule_type: row.rule_type } }))
+      return
+    }
     const params: any = {}
     if (ruleStatusFilter.value !== null) params.is_active = ruleStatusFilter.value
     const res = await get('/attendance/rules', params)
@@ -5718,6 +5730,7 @@ async function fetchRules() {
 function openRuleDialog(row?: any) {
   if (row) {
     ruleForm.value = normalizeRule(row)
+    if (projectRuleMode.value) ruleForm.value.extra.scope_mode = 'project'
   } else {
     ruleForm.value = defaultRuleForm()
     ruleForm.value.extra.scope_mode = 'project'
@@ -5979,6 +5992,13 @@ async function submitRule() {
   ruleSubmitting.value = true
   try {
     const payload = buildRulePayload()
+    if (projectRuleMode.value) {
+      await put(`/attendance/projects/${projectRuleId.value}/rule`, payload)
+      ruleDialogVisible.value = false
+      await fetchRules()
+      ElMessage.success('本项目专用规则已保存，其他项目不受影响')
+      return
+    }
     let savedRuleId = Number(ruleForm.value.id || 0)
     const checkUrl = ruleForm.value.id
       ? `/attendance/rules/conflicts/check?exclude_rule_id=${ruleForm.value.id}`
@@ -7530,9 +7550,9 @@ async function fetchAllEmployeesForAttendancePicker() {
 
 async function fetchOptions() {
   try {
-    const [, employees, companyRes, companyLayoutRes] = await Promise.all([
-      ensureDepartmentsLoaded(),
-      fetchAllEmployeesForAttendancePicker(),
+    await ensureDepartmentsLoaded().catch(() => {})
+    const [employees, companyRes, companyLayoutRes] = await Promise.all([
+      canManageGlobalRules.value ? fetchAllEmployeesForAttendancePicker() : get('/field/directory').then((directory: any) => directory.people || []),
       get('/payroll/companies', { active_only: false }).catch(() => []),
       get('/organizations/company-layouts').catch(() => []),
     ])
@@ -7566,6 +7586,7 @@ async function resumeSummaryTaskFromStorage() {
 
 onMounted(async () => {
   await fetchOptions()
+  if (projectRuleMode.value) { await fetchRules(); return }
   loadDailyReportSettings()
   loadSummaryReportSettings()
   loadStatusOverrides()

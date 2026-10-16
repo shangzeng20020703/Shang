@@ -9,7 +9,7 @@ from sqlalchemy import select, or_
 from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
 from app.models.attendance import AttendanceRecord
-from app.models.field_service import FieldMembership, FieldAttendanceSegment, FieldAssignmentDay
+from app.models.field_service import FieldMembership, FieldAttendanceSegment, FieldAssignmentDay, FieldProject
 from app.services.field_membership import utc, segment_view, clock_now
 
 ANOMALY_LABELS = ("迟到", "早退", "缺卡", "定位 / WiFi", "待核对", "旷工", "其他异常")
@@ -126,7 +126,11 @@ async def build_dashboard(db, user, day, project_id=None, include_trend=False):
     ordinary_staff = select(Employee.id).where(
         Employee.status.in_(["在职", "试用", "试用期"]), Employee.is_superuser.is_(False),
         ~Employee.id.in_(select(EmployeeRole.employee_id).where(
-            EmployeeRole.is_active.is_(True), EmployeeRole.role_name != "employee")),
+            EmployeeRole.is_active.is_(True), EmployeeRole.role_name.in_(
+                ["admin", "hr", "regional_lead", "aftersales_manager", "finance", "asset_admin"]))),
+        or_(Employee.id.in_(select(FieldProject.manager_id)),
+            ~Employee.id.in_(select(EmployeeRole.employee_id).where(
+                EmployeeRole.is_active.is_(True), EmployeeRole.role_name != "employee"))),
     )
     roster = ordinary_staff
     if project_id is not None or not await is_admin(db, user):

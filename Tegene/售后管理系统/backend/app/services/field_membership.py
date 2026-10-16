@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, text, or_
 
 from app.models.employee import Employee
-from app.models.field_service import FieldAssignment, FieldAssignmentDay, FieldMembership, FieldAttendanceSegment, FieldSite, FieldProject
+from app.models.field_service import FieldAssignment, FieldAssignmentDay, FieldMembership, FieldAttendanceSegment, FieldSite, FieldProject, FieldTransferRequest
 from app.models.attendance import AttendanceRecord, AttendanceRule, AttendanceStatus, CorrectionStatus, ClockSource, ShiftSchedule
 
 CST = timezone(timedelta(hours=8))
@@ -96,6 +96,27 @@ async def current(db, employee_id, now=None):
     return rows[0] if rows else None
 
 
+async def project_on(db, employee_id, day):
+    """Return the single main project for a China-local calendar day.
+
+    New dated assignments must not put two project intervals in the same day.
+    Legacy same-day transfer rows remain stored for historical audit and are
+    surfaced as a conflict instead of choosing one project arbitrarily.
+    """
+    start = datetime.combine(day, time.min, CST).astimezone(timezone.utc)
+    end = start + timedelta(days=1)
+    rows = (await db.execute(select(FieldMembership, FieldAssignment, FieldSite, FieldProject)
+        .join(FieldAssignment, FieldAssignment.id == FieldMembership.assignment_id)
+        .join(FieldSite, FieldSite.id == FieldAssignment.site_id)
+        .join(FieldProject, FieldProject.id == FieldSite.project_id)
+        .where(FieldMembership.employee_id == employee_id,
+               FieldMembership.started_at < end,
+               or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > start)))).all()
+    if len(rows) > 1:
+        raise HTTPException(409, "该员工当天存在多个项目，请先确认唯一主项目")
+    return rows[0] if rows else None
+
+
 async def managed_field_person(db, employee_id, person=None):
     if person is None:
         from app.services.attendance import AttendanceRecordService
@@ -110,16 +131,9 @@ async def managed_field_person(db, employee_id, person=None):
 async def day_runtime(db, person, day):
     """Unpunched days still use project rules when generating attendance summaries."""
     from app.services.attendance import AttendanceRecordService as attendance
-    start = datetime.combine(day, time.min, CST).astimezone(timezone.utc)
-    row = (await db.execute(select(FieldMembership, FieldSite)
-        .join(FieldAssignment, FieldAssignment.id == FieldMembership.assignment_id)
-        .join(FieldSite, FieldSite.id == FieldAssignment.site_id)
-        .where(FieldMembership.employee_id == person.id, FieldMembership.started_at < start + timedelta(days=1),
-               or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > start),
-               or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > FieldMembership.started_at))
-        .order_by(FieldMembership.started_at.desc(), FieldMembership.id.desc()).limit(1))).first()
-    if row:
-        membership, site = row
+    owner = await project_on(db, person.id, day)
+    if owner:
+        membership, _, site, _ = owner
         shift = await db.scalar(select(ShiftSchedule).join(FieldAssignmentDay, FieldAssignmentDay.shift_id == ShiftSchedule.id)
             .where(FieldAssignmentDay.assignment_id == membership.assignment_id, FieldAssignmentDay.work_date == day))
         rule_id = shift.rule_id if shift else site.rule_id
@@ -137,7 +151,7 @@ async def day_runtime(db, person, day):
     attendance._apply_rule_runtime_people(runtime, person.id)
     runtime.update(employee=person, shift=shift, project_assigned=True)
     from app.services.rotation import apply_runtime
-    project_id = site.project_id if row else None
+    project_id = site.project_id if owner else None
     await apply_runtime(db, runtime, person.id, day, project_id)
     return runtime
 
@@ -158,6 +172,9 @@ async def add_members(db, user, project_id, employee_ids):
         existing = await current(db, employee_id, now)
         if existing:
             raise HTTPException(409, f"{person.name}已在{existing[3].name}，请从原项目使用调动功能")
+        earlier_today = await project_on(db, employee_id, now.astimezone(CST).date())
+        if earlier_today:
+            raise HTTPException(409, f"{person.name}今天已归属{earlier_today[3].name}，新项目须从未来日期开始")
         planned = await db.scalar(select(FieldMembership.id).where(FieldMembership.employee_id == employee_id, FieldMembership.started_at > now, or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > FieldMembership.started_at)).limit(1))
         if planned:
             raise HTTPException(409, f"{person.name}还有未来项目安排，请先移出该安排")
@@ -237,6 +254,12 @@ async def remove_or_transfer(db, user, assignment_id, project_id=None):
         raise HTTPException(422, "请选择其他项目")
     if project_id is not None:
         await service.require_project_manager(db, user, project_id)
+        from app.services.field_roles import primary_regional_lead_id
+        outgoing = await primary_regional_lead_id(db, site.project_id)
+        incoming = await primary_regional_lead_id(db, project_id)
+        if outgoing and incoming and outgoing != incoming:
+            raise HTTPException(409, "跨区域项目调动须使用未来交接申请，经双方确认")
+        raise HTTPException(409, "项目调动须填写未来生效日期并走交接申请")
     await lock_person(db, assignment.employee_id)
     membership = await db.scalar(select(FieldMembership).where(FieldMembership.assignment_id == assignment_id).execution_options(populate_existing=True))
     now = clock_now()
@@ -246,6 +269,224 @@ async def remove_or_transfer(db, user, assignment_id, project_id=None):
     if project_id is not None:
         await add_members(db, user, project_id, [assignment.employee_id])
     return {"id": assignment_id, "employee_id": assignment.employee_id, "project_id": project_id, "ended_at": now}
+
+
+async def request_transfer(db, user, assignment_id, data):
+    from app.services.field_roles import primary_regional_lead_id, require_project_manage
+    assignment = await db.get(FieldAssignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "原项目人员记录不存在")
+    source_site = await db.get(FieldSite, assignment.site_id)
+    if source_site.project_id == data.project_id:
+        raise HTTPException(422, "请选择其他项目")
+    await require_project_manage(db, user, data.project_id)
+    outgoing_reviewer = await primary_regional_lead_id(db, source_site.project_id)
+    incoming_reviewer = await primary_regional_lead_id(db, data.project_id)
+    if not outgoing_reviewer or not incoming_reviewer:
+        raise HTTPException(409, "原项目和接收项目均须先指定主责区域组长")
+    destination = await db.scalar(select(FieldSite).where(
+        FieldSite.project_id == data.project_id, FieldSite.is_active.is_(True)).limit(1))
+    if not destination or not (await db.get(FieldProject, data.project_id)).is_active:
+        raise HTTPException(422, "接收项目尚未配置有效的打卡现场")
+    target_rule = await db.get(AttendanceRule, destination.rule_id)
+    if not target_rule or not target_rule.is_active or target_rule.effective_date > data.effective_date:
+        raise HTTPException(422, "接收项目考勤规则在交接日期尚未生效")
+    if data.effective_date <= clock_now().astimezone(CST).date():
+        raise HTTPException(422, "交接生效日期须晚于今天")
+    await lock_person(db, assignment.employee_id)
+    membership = await db.scalar(select(FieldMembership).where(FieldMembership.assignment_id == assignment_id))
+    handoff_at = datetime.combine(data.effective_date, time.min, CST).astimezone(timezone.utc)
+    if not membership or utc(membership.started_at) >= handoff_at or (membership.ended_at and utc(membership.ended_at) <= handoff_at):
+        raise HTTPException(409, "原项目参与记录未覆盖交接日期")
+    if await db.scalar(select(FieldTransferRequest.id).where(
+            FieldTransferRequest.employee_id == assignment.employee_id,
+            FieldTransferRequest.status == "pending").limit(1)):
+        raise HTTPException(409, "该员工已有待确认的项目交接")
+    # A published/recorded future project must be reconciled explicitly.
+    overlapping = await db.scalar(select(FieldMembership.id).where(
+        FieldMembership.employee_id == assignment.employee_id,
+        FieldMembership.assignment_id != assignment_id,
+        FieldMembership.started_at < handoff_at + timedelta(days=1),
+        or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > handoff_at)).limit(1))
+    if overlapping:
+        raise HTTPException(409, "交接日期已有其他项目安排")
+    now = clock_now()
+    # Reserve both project owners at submission time. The *_approved_at fields
+    # distinguish a reserved reviewer from an actual approval, so changing
+    # regional assignments later cannot silently reroute a pending handoff.
+    incoming_confirmed = user.id == incoming_reviewer
+    request = FieldTransferRequest(employee_id=assignment.employee_id,
+        pending_employee_id=assignment.employee_id,
+        from_assignment_id=assignment_id, from_project_id=source_site.project_id,
+        to_project_id=data.project_id, effective_date=data.effective_date,
+        requested_by=user.id, requested_at=now,
+        incoming_approved_by=incoming_reviewer,
+        incoming_approved_at=now if incoming_confirmed else None,
+        outgoing_approved_by=outgoing_reviewer,
+        reason=data.reason.strip(), status="pending")
+    db.add(request)
+    await db.flush()
+    from app.models.audit_log import AuditLog
+    db.add(AuditLog(operator_id=user.id, operator_name=user.name, action="request_transfer",
+        module="field", resource_type="FieldTransferRequest", resource_id=request.id,
+        after_data=json.dumps({"employee_id": request.employee_id,
+            "from_project_id": request.from_project_id, "to_project_id": request.to_project_id,
+            "effective_date": request.effective_date.isoformat(), "reason": request.reason,
+            "incoming_reviewer_id": incoming_reviewer,
+            "outgoing_reviewer_id": outgoing_reviewer,
+            "incoming_confirmed": incoming_confirmed}, ensure_ascii=False)))
+    return transfer_view(request)
+
+
+def transfer_view(request, names=None, can_review=False):
+    names = names or {}
+    review_stage = ("incoming" if request.incoming_approved_at is None else "outgoing") if request.status == "pending" else None
+    return {"id": request.id, "employee_id": request.employee_id,
+            "employee_name": names.get(request.employee_id, ""),
+            "from_project_id": request.from_project_id,
+            "from_project_name": names.get(("project", request.from_project_id), ""),
+            "to_project_id": request.to_project_id,
+            "to_project_name": names.get(("project", request.to_project_id), ""),
+            "effective_date": request.effective_date, "status": request.status,
+            "reason": request.reason, "review_note": request.review_note,
+            "requested_by": request.requested_by,
+            "incoming_approved_by": request.incoming_approved_by if request.incoming_approved_at else None,
+            "outgoing_approved_by": request.outgoing_approved_by if request.outgoing_approved_at else None,
+            "review_stage": review_stage,
+            "can_review": can_review}
+
+
+async def list_transfer_requests(db, user):
+    from app.services.field_roles import role_names, role_in_project
+    names = await role_names(db, user)
+    requests = (await db.scalars(select(FieldTransferRequest).order_by(
+        FieldTransferRequest.requested_at.desc(), FieldTransferRequest.id.desc()))).all()
+    visible = []
+    for row in requests:
+        if not names & {"admin", "hr", "aftersales_manager", "regional_lead"} and user.id not in {
+                row.employee_id, row.requested_by} and not await role_in_project(db, user, row.from_project_id) == "project_leader" and not await role_in_project(db, user, row.to_project_id) == "project_leader":
+            continue
+        visible.append(row)
+    employee_ids = {x.employee_id for x in visible}
+    project_ids = {x.from_project_id for x in visible} | {x.to_project_id for x in visible}
+    labels = dict((await db.execute(select(Employee.id, Employee.name).where(Employee.id.in_(employee_ids)))).all())
+    labels.update({("project", pid): name for pid, name in (await db.execute(
+        select(FieldProject.id, FieldProject.name).where(FieldProject.id.in_(project_ids)))).all()})
+    output = []
+    for row in visible:
+        reviewer_id = row.incoming_approved_by if row.incoming_approved_at is None else row.outgoing_approved_by
+        can_review = row.status == "pending" and "regional_lead" in names and user.id == reviewer_id
+        output.append(transfer_view(row, labels, can_review))
+    return output
+
+
+async def review_transfer(db, user, request_id, data):
+    from app.services.field_roles import role_names
+    request = await db.get(FieldTransferRequest, request_id)
+    if not request:
+        raise HTTPException(404, "项目交接申请不存在")
+    if request.status != "pending":
+        raise HTTPException(409, "交接申请已处理")
+    stage = "incoming" if request.incoming_approved_at is None else "outgoing"
+    reviewer_id = request.incoming_approved_by if stage == "incoming" else request.outgoing_approved_by
+    if not reviewer_id or user.id != reviewer_id or "regional_lead" not in await role_names(db, user):
+        raise HTTPException(403, "须由该阶段指定的主责区域组长确认交接")
+    if (stage == "outgoing" and request.incoming_approved_by != request.outgoing_approved_by
+            and user.id == request.incoming_approved_by):
+        raise HTTPException(403, "跨区域交接须由原项目方的另一位负责人确认")
+    await lock_person(db, request.employee_id)
+    now = clock_now()
+    if stage == "incoming":
+        if data.approve:
+            request.incoming_approved_at = now
+        else:
+            request.status = "rejected"
+            request.pending_employee_id = None
+        request.review_note = data.note.strip()
+        from app.models.audit_log import AuditLog
+        db.add(AuditLog(operator_id=user.id, operator_name=user.name,
+            action="approve_incoming_transfer" if data.approve else "reject_incoming_transfer",
+            module="field", resource_type="FieldTransferRequest", resource_id=request.id,
+            after_data=json.dumps({"status": request.status, "stage": "incoming",
+                "reviewer_id": user.id, "note": request.review_note}, ensure_ascii=False)))
+        await db.flush()
+        return transfer_view(request)
+    if data.approve:
+        handoff_at = datetime.combine(request.effective_date, time.min, CST).astimezone(timezone.utc)
+        if handoff_at <= now:
+            raise HTTPException(409, "交接日期已过，请重新申请")
+        # A future punch, including a manually added record, cannot be moved
+        # to another project without a separate attendance correction.
+        recorded = await db.scalar(select(AttendanceRecord.id).where(
+            AttendanceRecord.employee_id == request.employee_id,
+            AttendanceRecord.date >= request.effective_date).limit(1))
+        if recorded:
+            raise HTTPException(409, "交接日期后已有考勤记录，请先核对后再确认交接")
+        source = await db.scalar(select(FieldMembership).where(
+            FieldMembership.assignment_id == request.from_assignment_id))
+        if not source or utc(source.started_at) >= handoff_at or (source.ended_at and utc(source.ended_at) <= handoff_at):
+            raise HTTPException(409, "原项目参与记录已变化，请重新申请")
+        other = await db.scalar(select(FieldMembership.id).where(
+            FieldMembership.employee_id == request.employee_id,
+            FieldMembership.assignment_id != request.from_assignment_id,
+            or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > handoff_at)).limit(1))
+        if other:
+            raise HTTPException(409, "交接日期已有其他项目安排")
+        site = await db.scalar(select(FieldSite).where(FieldSite.project_id == request.to_project_id,
+            FieldSite.is_active.is_(True)).limit(1))
+        if not site:
+            raise HTTPException(409, "接收项目打卡现场已失效")
+        rule = await db.get(AttendanceRule, site.rule_id)
+        if not rule or not rule.is_active or rule.effective_date > request.effective_date:
+            raise HTTPException(409, "接收项目考勤规则已失效，请重新申请交接")
+        # Legacy field assignments materialize their dates as global shifts.
+        # Clear only future unworked rows from the outgoing assignment. The
+        # confirmed handoff and the audit entry below explain the change.
+        future_days = (await db.scalars(select(FieldAssignmentDay).where(
+            FieldAssignmentDay.assignment_id == request.from_assignment_id,
+            FieldAssignmentDay.work_date >= request.effective_date))).all()
+        shift_ids = [row.shift_id for row in future_days]
+        for row in future_days:
+            await db.delete(row)
+        await db.flush()
+        for shift_id in shift_ids:
+            shift = await db.get(ShiftSchedule, shift_id)
+            if shift:
+                await db.delete(shift)
+        await db.flush()
+        source.ended_at = handoff_at
+        source.active_employee_id = None
+        old_assignment = await db.get(FieldAssignment, request.from_assignment_id)
+        old_assignment.end_date = request.effective_date - timedelta(days=1)
+        target = FieldAssignment(site_id=site.id, employee_id=request.employee_id,
+            start_date=request.effective_date, end_date=date(9999, 12, 30),
+            created_by=request.requested_by, status="active",
+            description=f"跨项目交接申请 #{request.id}")
+        db.add(target)
+        await db.flush()
+        db.add(FieldMembership(assignment_id=target.id, employee_id=request.employee_id,
+            started_at=handoff_at, ended_at=None, active_employee_id=request.employee_id))
+        await db.flush()
+        request.status = "approved"
+        from app.services.rotation import reconcile_transfer_schedule
+        await reconcile_transfer_schedule(db, user, request.employee_id,
+            request.from_project_id, request.to_project_id, request.effective_date,
+            request.reason)
+    else:
+        request.status = "rejected"
+    request.pending_employee_id = None
+    if data.approve:
+        request.outgoing_approved_at = now
+    request.review_note = data.note.strip()
+    from app.models.audit_log import AuditLog
+    db.add(AuditLog(operator_id=user.id, operator_name=user.name,
+        action="approve_transfer" if data.approve else "reject_transfer",
+        module="field", resource_type="FieldTransferRequest", resource_id=request.id,
+        after_data=json.dumps({"status": request.status,
+            "outgoing_approved_by": user.id, "note": request.review_note,
+            "future_source_shifts_cleared": len(future_days) if data.approve else 0}, ensure_ascii=False)))
+    await db.flush()
+    return transfer_view(request)
 
 
 async def stop_person(db, employee_id):

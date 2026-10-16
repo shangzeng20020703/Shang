@@ -3,15 +3,17 @@ import { hasUsableWebAuthToken, getWebAuthRoles, isWebAuthSuperuser, hasWebManag
 import { rememberLoginDestination } from '@/utils/wecom'
 import { useUserStore } from '@/stores/user'
 const admin = ['admin','hr']
+const roster = ['admin','hr','aftersales_manager']
+const rules = ['admin','hr','regional_lead','aftersales_manager']
 const router=createRouter({history:createWebHistory(),routes:[
 {path:'/login',component:()=>import('@/views/LoginView.vue')},
 {path:'/',component:()=>import('@/views/LayoutView.vue'),redirect:'/dashboard',children:[
 {path:'dashboard',component:()=>import('@/views/FieldDashboard.vue'),meta:{title:'项目人员看板'}},
 {path:'field',component:()=>import('@/views/FieldView.vue'),meta:{title:'项目库'}},
 {path:'rotation',component:()=>import('@/views/RotationView.vue'),meta:{title:'现场轮休'}},
-{path:'employees',component:()=>import('@/views/FieldPeople.vue'),meta:{title:'人员花名册',roles:admin}},
+{path:'employees',component:()=>import('@/views/FieldPeople.vue'),meta:{title:'人员花名册',roles:roster}},
 {path:'organization',component:()=>import('@/views/OrganizationView.vue'),meta:{title:'组织架构',roles:admin}},
-{path:'attendance',component:()=>import('@/views/AttendanceView.vue'),meta:{title:'考勤管理',roles:admin}},
+{path:'attendance',component:()=>import('@/views/AttendanceView.vue'),meta:{title:'考勤管理',roles:rules}},
 {path:'approval',component:()=>import('@/views/ApprovalView.vue'),meta:{title:'审批与模板'}},
 {path:'audit',component:()=>import('@/views/FieldAudit.vue'),meta:{title:'操作日志',roles:admin}},
 {path:'event-monitor',component:()=>import('@/views/EventMonitorView.vue'),meta:{title:'业务事件',roles:admin}},

@@ -8,7 +8,8 @@
 业务背景
 --------
 售后管理系统采用轻量级 RBAC（Role-Based Access Control）模型：
-  - 系统预定义有限数量的角色（admin / asset_admin / hr / manager / finance / employee）
+  - 系统预定义角色及独立售后业务角色（aftersales_manager / regional_lead）。
+    售后项目组长由 field_projects.manager_id 任命；旧 manager 只是部门经理。
   - 每位员工可被授予一个或多个角色（多角色并集取权限）
   - 权限校验在 API 层通过 `Depends(require_roles(...))` 注入实现
   - 角色授予/撤销操作本身会记录到 audit_logs 表
@@ -93,10 +94,10 @@ class EmployeeRole(Base):
         Integer, ForeignKey("employees.id", ondelete="CASCADE"),
         nullable=False, index=True, comment="员工ID"
     )
-    # 角色名称，取值：admin/asset_admin/hr/manager/finance/employee
+    # 售后经理与区域组长是独立业务角色；项目组长按项目绑定。
     role_name = Column(
         String(30), nullable=False, index=True,
-        comment="角色: admin/asset_admin/hr/manager/finance/employee"
+        comment="角色: admin/asset_admin/hr/manager/finance/employee/aftersales_manager/regional_lead"
     )
     # 角色是否生效；撤销授权时置 False 而非删除记录，保留审计轨迹
     is_active = Column(Boolean, nullable=False, default=True)

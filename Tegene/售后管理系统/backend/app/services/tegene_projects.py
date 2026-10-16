@@ -97,7 +97,9 @@ async def fetch_projects():
 
 
 async def list_projects(db, user):
-    await field_service.require_admin(db, user)
+    from app.services.field_roles import role_names
+    if not await role_names(db, user) & {"admin", "hr", "aftersales_manager", "regional_lead"}:
+        raise HTTPException(403, "无权查看售后项目库")
     if not configured():
         return {"configured": False, "projects": []}
     source, projects = await fetch_projects()
@@ -111,7 +113,9 @@ async def list_projects(db, user):
 
 
 async def link_project(db, user, external_id, data):
-    await field_service.require_admin(db, user)
+    from app.services.field_roles import role_names
+    if not await role_names(db, user) & {"admin", "aftersales_manager"}:
+        raise HTTPException(403, "仅售后经理可将新项目接入售后库")
     source, projects = await fetch_projects()
     project = next((p for p in projects if p["id"] == str(external_id)), None)
     if project is None:

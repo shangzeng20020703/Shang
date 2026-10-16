@@ -218,8 +218,9 @@
               fill="outline"
               label="审批意见"
               label-placement="stacked"
-              placeholder="可填写通过、驳回或撤回说明"
+              :placeholder="requiresManagerOverrideNote ? '管理员代审须填写原因' : '可填写通过、驳回或撤回说明'"
             />
+            <p v-if="requiresManagerOverrideNote && canAct" class="muted">管理员代售后经理审批请假、出差时，必须填写处理原因。</p>
             <div v-if="canAct" class="wecom-action-buttons">
               <ion-button expand="block" :disabled="submitting" @click="processApproval('approve')">通过</ion-button>
               <ion-button expand="block" color="danger" fill="outline" :disabled="submitting" @click="processApproval('reject')">
@@ -290,7 +291,8 @@ const comment = ref('')
 const submitting = ref(false)
 const remindSubmitting = ref(false)
 
-const canAct = computed(() => mode.value === 'pending' && detail.value?.status === 'pending')
+const requiresManagerOverrideNote = computed(() => auth.roles.includes('admin') && (isLeaveLikeForm.value || isBusinessTripDetail.value))
+const canAct = computed(() => mode.value === 'pending' && detail.value?.status === 'pending' && !((isLeaveLikeForm.value || isBusinessTripDetail.value) && auth.roles.includes('hr') && !auth.roles.includes('aftersales_manager') && !auth.roles.includes('admin')))
 const canWithdraw = computed(() => mode.value === 'submitted' && detail.value?.status === 'pending')
 const isCurrentApplicant = computed(() => {
   const applicantId = Number(detail.value?.applicant_id || 0)
@@ -1308,6 +1310,10 @@ function overtimeTypeLabel(type?: string | null) {
 }
 
 async function processApproval(action: 'approve' | 'reject') {
+  if (requiresManagerOverrideNote.value && !comment.value.trim()) {
+    await presentDetailToast('请填写管理员代审原因', 'warning')
+    return
+  }
   submitting.value = true
   try {
     await post(`/approval/instances/${instanceId.value}/process`, {

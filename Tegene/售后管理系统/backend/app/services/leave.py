@@ -2434,6 +2434,15 @@ class LeaveRequestService:
         await db.flush()
         await db.refresh(request)
 
+        from app.services.field_roles import is_aftersales_person
+        if isinstance(db, AsyncSession) and await is_aftersales_person(db, employee_id):
+            from app.services.field_absence import capture_absence_days
+
+            await capture_absence_days(
+                db, "leave_request", request.id, employee_id,
+                request.start_date, request.end_date,
+            )
+
         # 软触发审批流（如配置了请假审批流则自动创建审批实例）
         # "软触发"含义：若系统未配置该模块的审批流，此调用静默忽略，不报错
         await maybe_create_approval_instance(
@@ -2465,7 +2474,7 @@ class LeaveRequestService:
 
     @staticmethod
     async def query_requests(
-        db: AsyncSession, params: LeaveRequestQuery
+        db: AsyncSession, params: LeaveRequestQuery, employee_scope=None
     ) -> Tuple[List[LeaveRequest], int]:
         """
         分页查询请假申请列表，支持多条件筛选。
@@ -2487,6 +2496,8 @@ class LeaveRequestService:
             count_stmt = count_stmt.join(Employee, Employee.id == LeaveRequest.employee_id)
 
         conditions = []
+        if employee_scope is not None:
+            conditions.append(LeaveRequest.employee_id.in_(employee_scope))
         if params.employee_id is not None:
             conditions.append(LeaveRequest.employee_id == params.employee_id)
         if params.leave_type_id is not None:
@@ -2635,7 +2646,7 @@ class LeaveRequestService:
 
     @staticmethod
     async def list_pending_approvals(
-        db: AsyncSession, page: int = 1, page_size: int = 20
+        db: AsyncSession, page: int = 1, page_size: int = 20, employee_scope=None
     ) -> Tuple[List[LeaveRequest], int]:
         """
         获取所有待审批的请假申请列表（HR/主管审批工作台使用）。
@@ -2651,6 +2662,8 @@ class LeaveRequestService:
             (待审批申请列表, 总记录数)，按创建时间升序排列
         """
         conditions = [LeaveRequest.approval_status == ApprovalStatus.pending]
+        if employee_scope is not None:
+            conditions.append(LeaveRequest.employee_id.in_(employee_scope))
         count_result = await db.execute(
             select(func.count()).select_from(LeaveRequest).where(and_(*conditions))
         )

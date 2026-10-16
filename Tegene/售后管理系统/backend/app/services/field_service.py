@@ -12,6 +12,7 @@ from app.models.field_service import (
     FieldAssignment,
     FieldAssignmentDay,
     FieldTegeneProject,
+    FieldRegionalAssignment,
 )
 from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
@@ -62,7 +63,8 @@ async def require_admin(db, user):
 
 
 async def project_ids(db, user):
-    if await is_admin(db, user):
+    from app.services.field_roles import role_names
+    if await role_names(db, user) & {"admin", "hr", "aftersales_manager", "regional_lead"}:
         return None
     own = set(
         (
@@ -82,16 +84,14 @@ async def project_ids(db, user):
 
 
 async def require_project_manager(db, user, project_id):
-    project = await db.get(FieldProject, project_id)
-    if not project:
-        raise HTTPException(404, "项目不存在")
-    if not await is_admin(db, user) and project.manager_id != user.id:
-        raise HTTPException(403, "无权管理该项目")
-    return project
+    from app.services.field_roles import require_project_manage
+    return await require_project_manage(db, user, project_id)
 
 
 async def directory(db, user):
-    admin = await is_admin(db, user)
+    from app.services.field_roles import aftersales_person_ids, role_names, regional_assignments, role_in_project
+    identity = await role_names(db, user)
+    admin = bool(identity & {"admin", "hr", "aftersales_manager", "regional_lead"})
     allowed = await project_ids(db, user)
     ps = select(FieldProject).order_by(FieldProject.id.desc())
     if allowed is not None:
@@ -125,15 +125,14 @@ async def directory(db, user):
         )
     assignments = list((await db.scalars(stmt)).all())
     es = select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.name)
-    if not admin and not any(p.manager_id == user.id for p in projects):
+    if identity & {"aftersales_manager", "regional_lead"} and not identity & {"admin", "hr"}:
+        es = es.where(Employee.id.in_(aftersales_person_ids()))
+    elif not admin:
         es = es.where(
-            (Employee.direct_manager_id == user.id)
-            | (
-                Employee.id.in_(
-                    {user.id}
-                    | {a.employee_id for a in assignments}
-                    | {p.manager_id for p in projects}
-                )
+            Employee.id.in_(
+                {user.id}
+                | {a.employee_id for a in assignments}
+                | {p.manager_id for p in projects}
             )
         )
     es = es.where(Employee.status.in_(["在职", "试用"]))
@@ -160,14 +159,21 @@ async def directory(db, user):
     project_map = {p.id: p for p in projects}
     customer_map = {c.id: c for c in customers}
     rule_stmt = select(AttendanceRule).order_by(AttendanceRule.name)
-    if not admin and not any(p.manager_id == user.id for p in projects):
+    if not admin:
         rule_stmt = rule_stmt.where(AttendanceRule.id.in_({s.rule_id for s in sites}))
     rules = list((await db.scalars(rule_stmt)).all())
     rule_names = {r.id: r.name for r in rules}
     active_sites = {s.project_id: s for s in sites if s.is_active}
     manager_ids = set((await db.scalars(select(EmployeeRole.employee_id).where(
-        EmployeeRole.is_active.is_(True), EmployeeRole.role_name.in_(["admin", "hr", "manager"])
+        EmployeeRole.is_active.is_(True), EmployeeRole.role_name.in_(["admin", "aftersales_manager", "regional_lead"])
     ))).all()) if admin else set()
+    regional_rows = await regional_assignments(db)
+    regional_map = {}
+    for row in regional_rows:
+        regional_map.setdefault(row.project_id, []).append(row)
+    authority = {p.id: await role_in_project(db, user, p.id) for p in projects}
+    managed_ids = {pid for pid, role in authority.items() if role in {"admin", "aftersales_manager", "regional_lead"}}
+    schedule_ids = managed_ids | {pid for pid, role in authority.items() if role == "project_leader"}
     tegene = {r.project_id: r for r in (await db.scalars(
         select(FieldTegeneProject).where(FieldTegeneProject.project_id.in_(pids))
     )).all()}
@@ -178,6 +184,10 @@ async def directory(db, user):
                 **as_dict(p),
                 "customer_name": customer_map[p.customer_id].name,
                 "manager_name": names.get(p.manager_id, ""),
+                "primary_regional_lead_id": next((r.employee_id for r in regional_map.get(p.id, []) if r.kind == "primary"), None),
+                "assistant_regional_lead_ids": [r.employee_id for r in regional_map.get(p.id, []) if r.kind == "assistant"],
+                "can_manage": p.id in managed_ids,
+                "can_schedule": p.id in schedule_ids,
                 "source": "tegene" if p.id in tegene else "local",
                 "synced_at": tegene[p.id].synced_at if p.id in tegene else None,
                 "rule_id": active_sites[p.id].rule_id if p.id in active_sites else None,
@@ -225,13 +235,22 @@ async def directory(db, user):
              "check_method_mode": (r.extra_config or {}).get("check_method_mode", "any")}
             for r in rules
         ],
-        "can_manage": admin,
-        "managed_project_ids": [p.id for p in projects if p.manager_id == user.id],
+        "regional_assignments": [
+            {"id": row.id, "project_id": row.project_id, "employee_id": row.employee_id,
+             "kind": row.kind, "employee_name": names.get(row.employee_id, "")}
+            for row in regional_rows if row.project_id in pids
+        ],
+        "can_manage": bool(managed_ids),
+        "can_assign_regionals": bool(identity & {"admin", "aftersales_manager"}),
+        "managed_project_ids": sorted(managed_ids),
+        "schedule_project_ids": sorted(schedule_ids),
     }
 
 
 async def save_customer(db, user, data, item_id=None):
-    await require_admin(db, user)
+    from app.services.field_roles import role_names
+    if not await role_names(db, user) & {"admin", "aftersales_manager"}:
+        raise HTTPException(403, "仅售后经理可维护客户档案")
     obj = await db.get(FieldCustomer, item_id) if item_id else FieldCustomer()
     if obj is None:
         raise HTTPException(404, "客户不存在")
@@ -245,17 +264,27 @@ async def save_customer(db, user, data, item_id=None):
 
 
 async def save_project(db, user, data, item_id=None):
-    await require_admin(db, user)
+    from app.services.field_roles import role_names, require_project_manage, role_in_project
+    if item_id:
+        await require_project_manage(db, user, item_id)
+    elif not await role_names(db, user) & {"admin", "aftersales_manager"}:
+        raise HTTPException(403, "仅售后经理可创建项目")
     customer = await db.get(FieldCustomer, data.customer_id)
     manager = await db.get(Employee, data.manager_id)
     if not customer or not customer.is_active or not manager or not manager.is_active:
         raise HTTPException(422, "客户或负责人无效")
-    manager_roles = await roles(db, manager)
-    if not manager_roles & {"manager", "hr", "admin"}:
-        raise HTTPException(422, "项目负责人需具有负责人或管理员角色")
+    if manager.status not in {"在职", "试用"}:
+        raise HTTPException(422, "项目组长须为在职人员")
     obj = await db.get(FieldProject, item_id) if item_id else FieldProject()
     if obj is None:
         raise HTTPException(404, "项目不存在")
+    if item_id and await role_in_project(db, user, item_id) == "regional_lead":
+        unchanged = (data.code.strip(), data.name.strip(), data.customer_id,
+                     data.description.strip(), data.is_active)
+        existing = (obj.code, obj.name, obj.customer_id, obj.description, obj.is_active)
+        if unchanged != existing:
+            raise HTTPException(403, "区域组长只能任命该项目的项目组长")
+    previous_manager_id = obj.manager_id if item_id else None
     if item_id and await db.scalar(select(FieldTegeneProject.id).where(FieldTegeneProject.project_id == item_id)):
         if (data.code.strip(), data.name.strip(), data.customer_id) != (obj.code, obj.name, obj.customer_id):
             raise HTTPException(409, "Tegene 项目的编号、名称和客户请在源系统维护，再同步资料")
@@ -265,6 +294,10 @@ async def save_project(db, user, data, item_id=None):
         raise HTTPException(422, "名称和编号不能为空")
     db.add(obj)
     await db.flush()
+    if item_id and previous_manager_id != obj.manager_id:
+        from app.models.field_service import FieldProjectLeaderHistory
+        db.add(FieldProjectLeaderHistory(project_id=obj.id, previous_employee_id=previous_manager_id,
+                                         employee_id=obj.manager_id, changed_by=user.id))
     return as_dict(obj)
 
 
@@ -344,13 +377,13 @@ async def project_site(db, project_id):
 
 async def configure_project(db, user, project_id, data):
     from app.schemas.field_service import SiteInput
+    from app.services.field_roles import record_project_leader_change
     project = await require_project_manager(db, user, project_id)
     if data.manager_id is not None and data.manager_id != project.manager_id:
-        await require_admin(db, user)
         manager = await db.get(Employee, data.manager_id)
-        if not manager or not manager.is_active or not await roles(db, manager) & {"admin", "hr", "manager"}:
+        if not manager or not manager.is_active or manager.status not in {"在职", "试用"}:
             raise HTTPException(422, "请选择有效的项目负责人")
-        project.manager_id = data.manager_id
+        await record_project_leader_change(db, user, project, data.manager_id)
     if data.rule_id is not None:
         site = await project_site(db, project.id)
         await save_site(db, user, SiteInput(project_id=project.id, name=project.name,
@@ -400,23 +433,8 @@ async def create_assignment(db, user, data):
         or not rule.is_active
     ):
         raise HTTPException(422, "项目、人员或规则无效")
-    if (
-        not await is_admin(db, user)
-        and person.id != user.id
-        and person.direct_manager_id != user.id
-    ):
-        existing = await db.scalar(
-            select(FieldAssignment.id)
-            .join(FieldSite, FieldSite.id == FieldAssignment.site_id)
-            .join(FieldProject, FieldProject.id == FieldSite.project_id)
-            .where(
-                FieldAssignment.employee_id == person.id,
-                FieldProject.manager_id == user.id,
-            )
-            .limit(1)
-        )
-        if not existing:
-            raise HTTPException(403, "只能安排本人、直属人员或本项目已有人员")
+    # Project-scoped write authority was already checked above. Department-manager
+    # relations do not grant aftersales project authority.
     if rule.effective_date > data.start_date:
         raise HTTPException(422, "参与开始日期早于考勤规则生效日期")
     conflicts = await db.scalar(
@@ -535,7 +553,10 @@ async def dashboard(db, user, day, project_id=None, include_trend=False):
 
 async def team_attendance(db, user, year, month):
     """Supply the original mobile team cards with project-scoped monthly data."""
-    if not await roles(db, user) & {"admin", "hr", "manager"}:
+    from app.services.field_roles import role_names
+    names = await role_names(db, user)
+    if not names & {"admin", "hr", "aftersales_manager", "regional_lead"} and not await db.scalar(
+            select(FieldProject.id).where(FieldProject.manager_id == user.id).limit(1)):
         raise HTTPException(403, "仅管理人员可查看团队考勤")
     from app.services.attendance import MonthSummaryService
     from app.schemas.attendance import MonthSummaryGenerateRequest
@@ -545,13 +566,11 @@ async def team_attendance(db, user, year, month):
 
     context = await directory(db, user)
     allowed_ids = {p["id"] for p in context["people"]}
-    if not await is_admin(db, user):
-        direct_ids = set((await db.scalars(select(Employee.id).where(
-            Employee.direct_manager_id == user.id
-        ))).all())
-        managed_ids = {a["employee_id"] for a in context["assignments"]
-                       if a["project_id"] in context["managed_project_ids"]}
-        allowed_ids &= direct_ids | managed_ids | {user.id}
+    if not names & {"admin", "hr", "aftersales_manager", "regional_lead"}:
+        project_ids = set(context["schedule_project_ids"])
+        project_member_ids = {a["employee_id"] for a in context["assignments"]
+                              if a["project_id"] in project_ids}
+        allowed_ids &= project_member_ids | {user.id}
     summaries = list((await db.scalars(select(AttendanceMonthSummary).where(
         AttendanceMonthSummary.employee_id.in_(allowed_ids),
         AttendanceMonthSummary.year == year, AttendanceMonthSummary.month == month,
@@ -587,7 +606,10 @@ async def team_attendance(db, user, year, month):
 
 
 async def list_people(db, user):
-    await require_admin(db, user)
+    from app.services.field_roles import role_names
+    operator_roles = await role_names(db, user)
+    if not operator_roles & {"admin", "hr", "aftersales_manager"}:
+        raise HTTPException(403, "无权查看售后花名册")
     from app.models.field_service import FieldWecomIdentity
     bindings = {b.employee_id: b for b in (await db.scalars(select(FieldWecomIdentity))).all()}
     rows = (await db.scalars(select(Employee).order_by(Employee.id))).all()
@@ -615,6 +637,10 @@ async def list_people(db, user):
     mapping = {}
     for employee_id, role in role_rows:
         mapping.setdefault(employee_id, []).append(role)
+    if "aftersales_manager" in operator_roles and not operator_roles & {"admin", "hr"}:
+        from app.services.field_roles import aftersales_person_ids
+        scoped_ids = set((await db.scalars(aftersales_person_ids())).all())
+        rows = [p for p in rows if p.id in scoped_ids]
     return [
         dict(
             **{key: getattr(p, key) for key in RosterFields.model_fields if key not in RosterDetails.model_fields and key != "current_project"},
@@ -635,21 +661,21 @@ async def list_people(db, user):
             wecom_corp_id=bindings[p.id].corp_id if p.id in bindings else "",
             role="admin"
             if p.is_superuser
-            else next(
-                (
-                    r
-                    for r in ["admin", "hr", "manager", "employee"]
-                    if r in mapping.get(p.id, [])
-                ),
-                "employee",
-            ),
+            else next((r for r in ["admin", "aftersales_manager", "regional_lead", "hr", "manager"]
+                       if r in mapping.get(p.id, [])),
+                      "employee"),
+            field_role=("project_leader" if await db.scalar(select(FieldProject.id).where(
+                FieldProject.manager_id == p.id).limit(1)) else None),
         )
         for p in rows
     ]
 
 
 async def save_person(db, user, data, item_id=None):
-    await require_admin(db, user)
+    from app.services.field_roles import role_names
+    operator_roles = await role_names(db, user)
+    if not operator_roles & {"admin", "hr", "aftersales_manager"}:
+        raise HTTPException(403, "无权维护售后花名册")
     from app.core.security import DEFAULT_INITIAL_PASSWORD, get_password_hash
     from app.services.wecom_auth import bind_member
     from app.schemas.field_roster import RosterFields
@@ -658,6 +684,10 @@ async def save_person(db, user, data, item_id=None):
     import re
     from app.services.field_membership import lock_person, stop_person
     row = await lock_person(db, item_id) if item_id else None
+    if row and "aftersales_manager" in operator_roles and not operator_roles & {"admin", "hr"}:
+        from app.services.field_roles import is_aftersales_person
+        if not await is_aftersales_person(db, row.id):
+            raise HTTPException(403, "售后经理只能维护售后人员")
     if not re.fullmatch(r"1[3-9]\d{9}", data.phone.strip()) and not (row and row.phone == data.phone):
         raise HTTPException(422, "手机号须为 11 位有效号码")
     if await db.scalar(select(Employee.id).where(Employee.phone == data.phone.strip(), Employee.id != (item_id or 0))):
@@ -666,18 +696,23 @@ async def save_person(db, user, data, item_id=None):
         data.is_active = False
     if item_id and not row:
         raise HTTPException(404, "人员不存在")
-    if (
-        row
-        and row.id == user.id
-        and (not data.is_active or data.role not in await roles(db, user))
-    ):
+    existing_roles = await role_names(db, row) if row else set()
+    if row and row.id == user.id and (not data.is_active or data.role not in existing_roles):
         raise HTTPException(409, "不能停用自己或移除自己的管理权限")
     if row and row.is_superuser and not user.is_superuser:
         raise HTTPException(403, "仅系统管理员可编辑系统管理员")
-    if (
-        data.role == "admin" or (row and "admin" in await roles(db, row))
-    ) and "admin" not in await roles(db, user):
+    if row and row.is_superuser and data.role != "admin":
+        raise HTTPException(409, "超级管理员角色不可通过售后花名册移除")
+    if (data.role == "admin" or "admin" in existing_roles) and "admin" not in operator_roles:
         raise HTTPException(403, "仅系统管理员可分配管理员权限")
+    if (data.role == "aftersales_manager" or "aftersales_manager" in existing_roles) and "admin" not in operator_roles:
+        raise HTTPException(403, "仅系统管理员可任命售后经理")
+    if (data.role == "regional_lead" or "regional_lead" in existing_roles) and not operator_roles & {"admin", "aftersales_manager"}:
+        raise HTTPException(403, "仅售后经理可任命区域组长")
+    if "aftersales_manager" in operator_roles and "admin" not in operator_roles and data.role in {"admin", "hr", "manager"}:
+        raise HTTPException(403, "售后经理只能分配售后业务角色")
+    if "aftersales_manager" in operator_roles and "admin" not in operator_roles and existing_roles & {"admin", "hr", "manager", "finance", "asset_admin"}:
+        raise HTTPException(403, "售后经理不能修改其他系统管理角色")
     if data.direct_manager_id:
         manager = await db.get(Employee, data.direct_manager_id)
         if not manager or not manager.is_active or data.direct_manager_id == item_id:
@@ -715,8 +750,19 @@ async def save_person(db, user, data, item_id=None):
     if not row.is_active:
         await stop_person(db, row.id)
     await bind_member(db, row.id, data.wecom_userid)
-    await db.execute(delete(EmployeeRole).where(EmployeeRole.employee_id == row.id))
-    db.add(EmployeeRole(employee_id=row.id, role_name=data.role, granted_by=user.id))
+    active_roles = (await db.scalars(select(EmployeeRole).where(EmployeeRole.employee_id == row.id,
+        EmployeeRole.is_active.is_(True)))).all()
+    if {r.role_name for r in active_roles} != {data.role}:
+        for existing in active_roles:
+            existing.is_active = False
+        db.add(EmployeeRole(employee_id=row.id, role_name=data.role, granted_by=user.id))
+        if "regional_lead" in {r.role_name for r in active_roles} and data.role != "regional_lead":
+            from app.services.field_roles import regional_assignments
+            for assignment in await regional_assignments(db, employee_id=row.id):
+                assignment.revoked_at = datetime.now(timezone.utc)
+                assignment.revoked_by = user.id
+                assignment.active_employee_id = None
+                assignment.active_primary_project_id = None
     await db.flush()
     return {"id": row.id, "name": row.name}
 

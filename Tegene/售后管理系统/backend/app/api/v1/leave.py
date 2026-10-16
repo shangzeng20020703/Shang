@@ -55,8 +55,9 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_roles
+from app.core.deps import get_current_user, get_user_role_names, require_roles
 from app.models.employee import Employee
+from app.models.approval import ApprovalInstance
 from app.models.leave import ApprovalStatus, LeaveBalance, LeaveRequest, LeaveType
 from app.models.organization import Department
 from app.schemas.leave import (
@@ -89,8 +90,56 @@ from app.services.leave import (
     LeaveTypeService,
 )
 from app.services.audit_log import AuditLogService
+from app.services.field_roles import require_aftersales_approver
 
 router = APIRouter(tags=["假期管理"])
+
+
+async def _require_leave_approver(db: AsyncSession, user: Employee,
+                                  request: LeaveRequest, note: Optional[str]) -> None:
+    role = await require_aftersales_approver(db, user, note)
+    if role == "aftersales_manager":
+        from app.services.field_roles import is_aftersales_person
+        if not await is_aftersales_person(db, request.employee_id):
+            raise HTTPException(status_code=403, detail="售后经理只能审批售后人员的申请")
+    if request.employee_id == user.id:
+        raise HTTPException(status_code=403, detail="申请人不能审批本人申请")
+    applicant = await db.get(Employee, request.employee_id)
+    if applicant and "aftersales_manager" in await get_user_role_names(db, applicant) and role != "admin":
+        raise HTTPException(status_code=403, detail="售后经理本人申请只能由管理员填写原因代审")
+
+
+async def _approve_leave_with_workflow(db: AsyncSession, request_id: int,
+                                       user: Employee, approved: bool,
+                                       note: Optional[str]) -> LeaveRequest:
+    request = await LeaveRequestService.get(db, request_id)
+    if request is None:
+        raise HTTPException(status_code=404, detail="请假申请不存在")
+    await _require_leave_approver(db, user, request, note)
+    instance = await db.scalar(
+        select(ApprovalInstance).where(
+            ApprovalInstance.module == "leave",
+            ApprovalInstance.business_type == "leave_request",
+            ApprovalInstance.business_id == request_id,
+            ApprovalInstance.template_version_id.is_(None),
+        ).order_by(ApprovalInstance.id.desc()).limit(1)
+    )
+    if instance is not None:
+        if instance.status != "pending":
+            raise HTTPException(status_code=409, detail="关联审批单已处理")
+        from app.schemas.approval import ApprovalActionRequest
+        from app.services import approval as approval_service
+
+        await approval_service.process_approval(
+            db, instance.id, user.id,
+            ApprovalActionRequest(action="approve" if approved else "reject", comment=note),
+        )
+        await db.refresh(request)
+        return request
+    result = await LeaveRequestService.approve(db, request_id, user.id, approved, note)
+    if result is None:
+        raise HTTPException(status_code=404, detail="请假申请不存在")
+    return result
 
 
 def _to_cn_status(status_value: str) -> str:
@@ -947,7 +996,7 @@ async def get_leave_calendar(
     department_id: Optional[int] = Query(None, description="部门ID，不传则全部门"),
     leave_type_id: Optional[int] = Query(None, description="假期类型ID"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     GET /leave/calendar — 获取请假日历数据（按日期组织）
@@ -991,7 +1040,7 @@ async def approved_leave_for_attendance(
     end_date: date = Query(..., description="查询结束日期"),
     employee_id: Optional[int] = Query(None, description="员工ID，不传返回范围内全部员工"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     考勤/月报预留接口：返回指定日期范围内审批通过的请假片段。
@@ -1038,7 +1087,7 @@ async def leave_punch_guard(
 async def leave_approval_context(
     request_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     审批预留接口：为通用审批引擎提供请假业务摘要、表单快照和后续回写钩子。
@@ -1056,7 +1105,7 @@ async def list_all_balances(
     employment_type: Optional[str] = Query(None, description="员工类型"),
     keyword: Optional[str] = Query(None, description="员工姓名/工号搜索"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     GET /leave/balances — HR 聚合视图：所有员工假期余额汇总
@@ -1200,7 +1249,7 @@ async def get_employee_balances(
     employee_id: int,
     year: int = Query(..., ge=2020, le=2100, description="年度"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     GET /leave/balances/{employee_id} — 查询指定员工的假期余额
@@ -1418,7 +1467,7 @@ async def create_leave_request(
 @router.get("/stats", response_model=LeaveStatsOut)
 async def leave_stats(
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     now = datetime.now(timezone.utc)
     yesterday_start = (now - timedelta(days=1)).replace(
@@ -1628,14 +1677,13 @@ async def list_leave_requests(
     GET /leave/requests — 查询请假记录（管理视角）
 
     用途：
-        HR 或管理员查询全员请假申请列表，支持按员工、假期类型、
+        HR 或管理员查询全员请假，售后经理仅查询售后人员的请假；支持按员工、假期类型、
         审批状态、日期范围组合过滤，分页返回。
         与 GET /requests/me 的区别：此接口可查询任意员工（employee_id 可选），
         不传 employee_id 则返回全员数据。
 
     权限：
-        需要登录（Depends(get_current_user)），无额外角色限制。
-        建议前端对普通员工限制只能查询自己的数据（传 employee_id=自己）。
+        服务端限制普通员工只能查看本人，售后经理只能查看售后人员。
 
     查询参数 (Query)：
         - employee_id: int | None      按员工 ID 过滤（不传则返回全员请假记录）
@@ -1664,6 +1712,16 @@ async def list_leave_requests(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"无效的状态: {approval_status}")
 
+    roles = await get_user_role_names(db, current_user)
+    employee_scope = None
+    if not roles.intersection({"admin", "hr", "aftersales_manager"}):
+        if employee_id not in (None, current_user.id):
+            raise HTTPException(status_code=403, detail="只能查看本人的请假申请")
+        employee_id = current_user.id
+    elif "aftersales_manager" in roles and not roles.intersection({"admin", "hr"}):
+        from app.services.field_roles import aftersales_person_ids
+        employee_scope = aftersales_person_ids()
+
     params = LeaveRequestQuery(
         employee_id=employee_id,
         department_id=department_id,
@@ -1676,7 +1734,7 @@ async def list_leave_requests(
         page=page,
         page_size=page_size,
     )
-    requests, total = await LeaveRequestService.query_requests(db, params)
+    requests, total = await LeaveRequestService.query_requests(db, params, employee_scope)
     items = await _serialize_leave_requests(db, requests)
     return PaginatedResponse(
         total=total,
@@ -1691,19 +1749,18 @@ async def pending_approvals(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr", "aftersales_manager")),
 ):
     """
     GET /leave/requests/pending — 获取待审批请假列表（管理员/HR/经理专用）
 
     用途：
-        返回所有状态为 "pending"（待审批）的请假申请，供审批人集中处理。
+        返回待审批请假；售后经理只看到售后人员的申请。
         通常展示在审批工作台或消息通知弹窗中。
         数据按申请时间倒序排列，最新申请优先。
 
     权限：
-        需要 admin、hr 或 manager 角色之一（Depends(require_roles("admin", "hr", "manager"))）。
-        普通员工无权访问此接口。
+        需要系统管理员、HR 或售后经理；HR 仅查看，不进入售后日常审批链。
 
     查询参数 (Query)：
         - page: int       页码，从 1 开始，默认 1
@@ -1720,7 +1777,13 @@ async def pending_approvals(
     对应 Service：
         LeaveRequestService.list_pending_approvals(db, page, page_size)
     """
-    requests, total = await LeaveRequestService.list_pending_approvals(db, page, page_size)
+    from app.services.field_roles import aftersales_person_ids
+    roles = await get_user_role_names(db, current_user)
+    employee_scope = (aftersales_person_ids()
+                      if "aftersales_manager" in roles and not roles.intersection({"admin", "hr"})
+                      else None)
+    requests, total = await LeaveRequestService.list_pending_approvals(
+        db, page, page_size, employee_scope)
     items = await _serialize_leave_requests(db, requests)
     return PaginatedResponse(
         total=total,
@@ -1744,8 +1807,7 @@ async def get_leave_request(
         假期类型、请假日期、天数、状态、审批意见等。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
-        建议业务层校验：员工只能查自己的申请，HR/经理可查任意申请。
+        本人可查看；管理员和 HR 可查看全部，售后经理只可查看售后人员。
 
     路径参数 (Path)：
         - request_id: int   请假申请主键 ID
@@ -1760,6 +1822,11 @@ async def get_leave_request(
     request = await LeaveRequestService.get(db, request_id)
     if request is None:
         raise HTTPException(status_code=404, detail="请假申请不存在")
+    roles = await get_user_role_names(db, current_user)
+    if request.employee_id != current_user.id and not roles.intersection({"admin", "hr"}):
+        from app.services.field_roles import is_aftersales_person
+        if "aftersales_manager" not in roles or not await is_aftersales_person(db, request.employee_id):
+            raise HTTPException(status_code=403, detail="只能查看授权范围内的请假申请")
     return request
 
 
@@ -1768,20 +1835,19 @@ async def approve_leave_request(
     request_id: int,
     data: LeaveApprovalRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(get_current_user),
 ):
     """
     POST /leave/requests/{request_id}/approve — 审批请假申请
 
     用途：
-        管理员/HR/经理对指定请假申请进行审批（通过或拒绝）。
+        售后经理对售后人员请假申请审批；管理员说明原因后可代审。
         审批通过时，Service 会自动从员工的对应假期余额中扣减请假天数，
         将申请状态更新为 "approved"，并记录审批人和审批时间。
         审批拒绝时，状态变为 "rejected"，余额不扣减。
 
     权限：
-        需要 admin、hr 或 manager 角色之一（Depends(require_roles("admin", "hr", "manager"))）。
-        普通员工无权审批他人申请。
+        仅售后经理或填写代审原因的管理员；不能审批本人申请。
 
     路径参数 (Path)：
         - request_id: int   请假申请主键 ID
@@ -1805,12 +1871,7 @@ async def approve_leave_request(
         LeaveRequestService.approve(db, request_id, current_user.id, data.approved, data.note)
     """
     try:
-        request = await LeaveRequestService.approve(
-            db, request_id, current_user.id, data.approved, data.note
-        )
-        if request is None:
-            raise HTTPException(status_code=404, detail="请假申请不存在")
-        return request
+        return await _approve_leave_with_workflow(db, request_id, current_user, data.approved, data.note)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1859,19 +1920,20 @@ async def cancel_leave_request(
 async def batch_approve_leave_requests(
     data: LeaveBatchApprovalRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(get_current_user),
 ):
+    await require_aftersales_approver(db, current_user, data.note)
     success = 0
     failed: list[dict] = []
     for request_id in data.request_ids:
         try:
-            req = await LeaveRequestService.approve(
-                db, request_id, current_user.id, data.approved, data.note
-            )
+            req = await _approve_leave_with_workflow(db, request_id, current_user, data.approved, data.note)
             if req is None:
                 failed.append({"id": request_id, "reason": "申请不存在"})
                 continue
             success += 1
+        except HTTPException as e:
+            failed.append({"id": request_id, "reason": str(e.detail)})
         except ValueError as e:
             failed.append({"id": request_id, "reason": str(e)})
     return {"success": success, "failed": failed, "total": len(data.request_ids)}

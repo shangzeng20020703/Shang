@@ -42,6 +42,55 @@ class FieldProject(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class FieldRegionalAssignment(Base):
+    """Auditable project authority; at most one active primary is enforced by service."""
+    __tablename__ = "field_regional_assignments"
+    __table_args__ = (UniqueConstraint("project_id", "active_employee_id", name="uq_field_regional_active_person"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("field_projects.id"), index=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))  # primary / assistant
+    # Nullable unique markers retain history while preventing concurrent active duplicates.
+    active_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    active_primary_project_id: Mapped[int | None] = mapped_column(ForeignKey("field_projects.id"), unique=True, nullable=True)
+    appointed_by: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    appointed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    revoked_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reason: Mapped[str] = mapped_column(String(500), default="")
+
+
+class FieldProjectLeaderHistory(Base):
+    __tablename__ = "field_project_leader_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("field_projects.id"), index=True)
+    previous_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    changed_by: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class FieldTransferRequest(Base):
+    """A future dated handoff, approved by both regional owners before activation."""
+    __tablename__ = "field_transfer_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    pending_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), unique=True, nullable=True)
+    from_assignment_id: Mapped[int] = mapped_column(ForeignKey("field_assignments.id"))
+    from_project_id: Mapped[int] = mapped_column(ForeignKey("field_projects.id"))
+    to_project_id: Mapped[int] = mapped_column(ForeignKey("field_projects.id"))
+    effective_date: Mapped[date] = mapped_column(Date)
+    requested_by: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    outgoing_approved_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    incoming_approved_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    outgoing_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    incoming_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    review_note: Mapped[str] = mapped_column(String(500), default="")
+
+
 class FieldTegeneProject(Base):
     __tablename__ = "field_tegene_projects"
     __table_args__ = (UniqueConstraint("source_url", "external_id", name="uq_field_tegene_project"),)

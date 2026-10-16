@@ -7,7 +7,7 @@
             <h2 class="page-section-title" style="margin: 0">团队考勤</h2>
             <span class="compact-chip">{{ `${year}-${String(month).padStart(2, '0')}` }}</span>
           </div>
-          <p class="muted-text" style="margin: 10px 0 0">聚合今日出勤、待审批请假和团队异常，方便项目经理和售后管理员 快速判断当天风险。</p>
+          <p class="muted-text" style="margin: 10px 0 0">聚合今日出勤、待审批请假和团队异常，方便项目组长、区域组长和售后经理判断现场情况。</p>
         </section>
 
         <section class="section-block mini-grid">

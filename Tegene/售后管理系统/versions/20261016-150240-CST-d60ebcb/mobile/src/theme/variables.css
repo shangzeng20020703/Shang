@@ -1,0 +1,22 @@
+:root {
+  --ion-color-primary: #3b5bfd;
+  --ion-color-primary-rgb: 59, 91, 253;
+  --ion-color-primary-contrast: #ffffff;
+  --ion-color-primary-shade: #344fe0;
+  --ion-color-primary-tint: #506dff;
+  --ion-background-color: #f3f7fb;
+  --ion-background-color-rgb: 243, 247, 251;
+  --ion-font-family: "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+  --app-card-radius: 22px;
+  --mobile-window-width: 430px;
+  --mobile-bottom-nav-height: 64px;
+  --mobile-bottom-nav-total-height: calc(var(--mobile-bottom-nav-height) + env(safe-area-inset-bottom));
+  --mobile-bottom-nav-background: rgba(255, 255, 255, 0.96);
+  --mobile-bottom-nav-color: #64748b;
+  --mobile-bottom-nav-active-color: #0b63f6;
+  --mobile-bottom-nav-label-size: 12px;
+  --mobile-bottom-nav-icon-size: 24px;
+  --mobile-bottom-nav-font-weight: 700;
+  --mobile-bottom-nav-border: rgba(226, 232, 240, 0.96);
+  --mobile-bottom-nav-side-border: rgba(226, 232, 240, 0.72);
+}

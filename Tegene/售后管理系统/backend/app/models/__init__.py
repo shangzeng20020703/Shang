@@ -58,6 +58,8 @@ from app.models.overtime import OvertimeRequest
 from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
 from app.models.rotation import RotationDay, RotationClaim, RotationAccount, RotationLedger
+from app.models.field_service import FieldProject, FieldSite, FieldAssignment, FieldMembership
+from app.models.field_absence import FieldAbsenceDay
 from app.models.changelog import DepartmentChangeLog
 from app.models.notification import Notification
 from app.models.chat import (

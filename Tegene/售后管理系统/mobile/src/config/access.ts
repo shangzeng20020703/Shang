@@ -1,6 +1,6 @@
 import { roleWorkbenchItems, workbenchItems, type WorkbenchShortcutItem } from './workbench'
 
-export type AppRole = 'admin' | 'asset_admin' | 'hr' | 'manager' | 'finance' | 'employee'
+export type AppRole = 'admin' | 'asset_admin' | 'hr' | 'manager' | 'regional_lead' | 'aftersales_manager' | 'finance' | 'employee'
 
 /**
  * 移动端权限配置。
@@ -12,13 +12,15 @@ export type AppRole = 'admin' | 'asset_admin' | 'hr' | 'manager' | 'finance' | '
 export type WorkbenchItem = WorkbenchShortcutItem
 export { workbenchItems }
 
-export const mobileSupportedRoles: AppRole[] = ['admin', 'employee', 'manager', 'hr']
+export const mobileSupportedRoles: AppRole[] = ['admin', 'employee', 'manager', 'regional_lead', 'aftersales_manager', 'hr']
 
 export const roleLabels: Record<AppRole, string> = {
   admin: '系统管理员',
   asset_admin: '行政管理员',
   hr: '售后管理员',
   manager: '项目经理',
+  regional_lead: '区域组长',
+  aftersales_manager: '售后经理',
   finance: '财务',
   employee: '售后人员',
 }
@@ -36,6 +38,8 @@ export function normalizeRoles(input: unknown): AppRole[] {
 export function primaryRole(roles: AppRole[]): AppRole {
   // 当用户兼多角色时，移动端用一个“主角色”决定 UI 文案和默认视角。
   if (roles.includes('admin')) return 'admin'
+  if (roles.includes('aftersales_manager')) return 'aftersales_manager'
+  if (roles.includes('regional_lead')) return 'regional_lead'
   if (roles.includes('asset_admin')) return 'asset_admin'
   if (roles.includes('hr')) return 'hr'
   if (roles.includes('manager')) return 'manager'
@@ -49,7 +53,7 @@ export function isRoleAllowed(roles: AppRole[], required?: AppRole[]) {
   return required.some((role) => roles.includes(role))
 }
 
-export function roleWorkbench(roles: AppRole[]) {
+export function roleWorkbench(roles: AppRole[], isProjectLeader = false) {
   // 根据当前用户角色裁剪移动端首页卡片。
-  return roleWorkbenchItems(roles)
+  return roleWorkbenchItems(roles, isProjectLeader)
 }

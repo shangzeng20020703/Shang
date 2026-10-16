@@ -13,6 +13,7 @@ class ReasonInput(BaseModel):
 class DayEdit(BaseModel):
     date: date
     kind: Literal["work", "rest"]
+    shift_label: Literal["day", "night"] | None = None
     expected_revision: int | None = None
 
 
@@ -56,10 +57,12 @@ class RotationAdjust(ReasonInput):
 class ClaimDay(BaseModel):
     date: date
     kind: Literal["work", "rest", "leave", "half_leave"]
+    project_id: int | None = Field(default=None, gt=0)
+    shift_label: Literal["day", "night"] | None = None
 
 
 class ClaimInput(ReasonInput):
-    project_id: int
+    project_id: int | None = Field(default=None, gt=0)
     employee_id: int | None = None
     kind: Literal["schedule", "credit", "leave"]
     days: list[ClaimDay] = Field(min_length=1, max_length=62)
@@ -67,6 +70,8 @@ class ClaimInput(ReasonInput):
 
     @model_validator(mode="after")
     def validate_days(self):
+        if self.project_id is None and any(d.project_id is None for d in self.days):
+            raise ValueError("跨项目申请须为每个日期指定项目")
         allowed = {"schedule": {"work", "rest"}, "credit": {"work"}, "leave": {"leave", "half_leave"}}[self.kind]
         if len({d.date for d in self.days}) != len(self.days) or any(d.kind not in allowed for d in self.days):
             raise ValueError("申请日期重复或日期类型不符合申请类型")
@@ -78,4 +83,5 @@ class ClaimInput(ReasonInput):
 class ClaimReview(ReasonInput):
     action: Literal["approve", "reject", "revoke"]
     days: Literal[0, 0.5, 1] | None = None
+    expected_step: int | None = Field(default=None, ge=0)
     note: str = Field(min_length=1, max_length=500)

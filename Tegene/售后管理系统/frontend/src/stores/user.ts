@@ -98,6 +98,8 @@ export const useUserStore = defineStore('user', () => {
     const role =
       data.is_superuser ? 'admin'
         : normalizedRoles.includes('admin') ? 'admin'
+          : normalizedRoles.includes('aftersales_manager') ? 'aftersales_manager'
+            : normalizedRoles.includes('regional_lead') ? 'regional_lead'
           : normalizedRoles.includes('asset_admin') ? 'asset_admin'
             : normalizedRoles.includes('hr') ? 'hr'
               : normalizedRoles.includes('manager') ? 'manager'

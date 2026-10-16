@@ -96,11 +96,12 @@ async def main():
             pid = configured["id"]
             future = today() + timedelta(days=40)
             members_data = {"employee_ids": [staff], "start_date": str(future), "end_date": str(future)}
-            await req("POST", f"/projects/{pid}/members", who="manager", status=422, json=members_data)
+            await req("POST", f"/projects/{pid}/members", who="manager", status=403, json=members_data)
             rule_id = original["rules"][0]["id"]
             await req("PUT", f"/projects/{pid}/configuration", who="staff", status=403, json={"rule_id": rule_id})
             await req("PUT", f"/projects/{pid}/configuration", who="manager", status=403, json={"manager_id": admin})
-            await req("PUT", f"/projects/{pid}/configuration", who="manager", json={"rule_id": rule_id})
+            await req("PUT", f"/projects/{pid}/configuration", who="manager", status=403, json={"rule_id": rule_id})
+            await req("PUT", f"/projects/{pid}/configuration", json={"rule_id": rule_id})
             count = len((await req("GET", "/directory"))["assignments"])
             await req("POST", f"/projects/{pid}/members", who="manager", status=403,
                       json={**members_data, "employee_ids": [staff, admin]})
@@ -129,12 +130,12 @@ async def main():
             copied = await rule_req("POST", f"/{rule_id}/copy", json={"name":"独立项目副本"})
             assert copied["extra_config"]["scope_mode"] == "project"
             await rule_req("PATCH", f"/{new_rule_id}/toggle", json={"is_active": False})
-            await req("PUT", f"/projects/{pid}/configuration", who="manager", status=422, json={"rule_id":new_rule_id})
+            await req("PUT", f"/projects/{pid}/configuration", status=422, json={"rule_id":new_rule_id})
             await rule_req("PATCH", f"/{new_rule_id}/toggle", json={"is_active": True})
             passed.append("central rule creation/copy, multiple project templates, disabled selection and no unrelated employee fallback")
             manager_dir = await req("GET", "/directory", who="manager")
-            assert new_rule_id in {r["id"] for r in manager_dir["rules"]}
-            await req("PUT", f"/projects/{pid}/configuration", who="manager", json={"rule_id": new_rule_id})
+            assert new_rule_id not in {r["id"] for r in manager_dir["rules"]}
+            await req("PUT", f"/projects/{pid}/configuration", json={"rule_id": new_rule_id})
             matched = await runtime(future)
             assert matched["rule"]["id"] == new_rule_id and matched["rule"]["require_photo"]
             assert matched["expected"]["clock_in"] == "10:00"
@@ -146,12 +147,13 @@ async def main():
             passed.append("editing the central rule refreshes the same project rule and future punch schedule")
             original_pid = original["projects"][0]["id"]
             old_runtime = await runtime(today())
-            await req("PUT", f"/projects/{original_pid}/configuration", who="manager", json={"rule_id": new_rule_id})
+            await req("PUT", f"/projects/{original_pid}/configuration", who="manager", status=403, json={"rule_id": new_rule_id})
+            await req("PUT", f"/projects/{original_pid}/configuration", json={"rule_id": new_rule_id})
             assert (await runtime(today()))["rule"]["id"] == old_runtime["rule"]["id"]
             async with async_session() as db:
                 db.add(AttendanceRecord(employee_id=staff,date=future))
                 await db.commit()
-            await req("PUT", f"/projects/{pid}/configuration", who="manager", status=409, json={"rule_id":rule_id})
+            await req("PUT", f"/projects/{pid}/configuration", status=409, json={"rule_id":rule_id})
             await rule_req("PUT", f"/{new_rule_id}", status=409, json={"clock_in_time":"12:00"})
             assert (await rule_req("GET", f"/{new_rule_id}"))["clock_in_time"] == "11:00:00"
             assert (await runtime(future))["rule"]["id"] == new_rule_id
@@ -160,7 +162,7 @@ async def main():
             path = "/tegene/projects/" + rows[0]["id"] + "/link"
             customer_count = len((await req("GET", "/directory"))["customers"])
             await req("POST", path, who="staff", status=403, json={"manager_id": manager})
-            await req("POST", path, status=422, json={"manager_id": staff})
+            await req("POST", path, status=422, json={"manager_id": 999999})
             unchanged = await req("GET", "/directory")
             assert len(unchanged["customers"]) == customer_count
             await req("POST", "/tegene/projects/not-a-uuid/link", status=422, json={"manager_id": manager})
@@ -176,8 +178,9 @@ async def main():
                 "address": rows[0]["siteAddress"], "rule_id": original["rules"][0]["id"]})
             day = str(today() + timedelta(days=20))
             assignment_data = {"site_id": site["id"], "employee_id": staff, "start_date": day, "end_date": day}
-            assignment = await req("POST", "/assignments", who="manager", json=assignment_data)
-            await req("POST", "/assignments", who="manager", status=409, json=assignment_data)
+            await req("POST", "/assignments", who="manager", status=403, json=assignment_data)
+            assignment = await req("POST", "/assignments", json=assignment_data)
+            await req("POST", "/assignments", status=409, json=assignment_data)
             passed.append("imported project uses existing site, manager and overlap-safe scheduling")
 
             await req("PUT", f"/projects/{local['id']}", status=409, json={**local, "name": "手工篡改"})
