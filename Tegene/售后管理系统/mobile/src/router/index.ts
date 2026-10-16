@@ -22,6 +22,7 @@ const routes: Array<RouteRecordRaw> = [{path:'/',redirect:'/app/tabs/home'},{pat
 {path:'tabs/profile',component:()=>import('@/pages/ProfilePage.vue'),meta:{breadcrumb:[{label:'我的'}]}},
 {path:'notifications',component:()=>import('@/pages/MessageCenterPage.vue'),meta:{breadcrumb:[{label:'通知'}]}},
 {path:'attendance',component:()=>import('@/pages/AttendancePage.vue'),meta:{breadcrumb:[{label:'打卡'}]}},
+{path:'rotation',component:()=>import('@/pages/RotationPage.vue'),meta:{breadcrumb:[{label:'排班与待休'}]}},
 {path:'approval/start',component:()=>import('@/pages/ApprovalStartPage.vue'),meta:{breadcrumb:[{label:'发起申请'}]}},
 {path:'approval/:id',component:()=>import('@/pages/ApprovalDetailPage.vue'),meta:{breadcrumb:[{label:'审批详情'}]}},
 {path:'people',component:()=>import('@/pages/PeoplePage.vue'),meta:{roles:['admin','hr','manager'],breadcrumb:[{label:'团队花名册'}]}},

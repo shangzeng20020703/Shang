@@ -218,6 +218,7 @@ async def directory(db, user):
         ],
         "rules": [
             {"id": r.id, "name": r.name, "is_active": r.is_active,
+             "rule_type": (r.extra_config or {}).get("rule_type", "fixed"),
              "clock_in_time": r.clock_in_time, "clock_out_time": r.clock_out_time,
              "require_gps": r.require_gps, "require_wifi": r.require_wifi,
              "require_photo": r.require_photo, "effective_date": r.effective_date,

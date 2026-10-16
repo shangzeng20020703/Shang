@@ -1115,19 +1115,23 @@
               </div>
             </div>
           </template>
-          <template v-else-if="ruleForm.extra.rule_type === 'free'">
+          <template v-else-if="isFlexibleRule(ruleForm.extra.rule_type)">
             <el-form-item label="打卡时间">
               <div class="free-time-panel">
-                <div class="free-time-row">
+                <div class="free-time-row" v-if="ruleForm.extra.rule_type !== 'rotation'">
                   <div class="free-time-label"><span class="required-star">*</span>工作日</div>
                   <el-checkbox-group v-model="ruleForm.extra.free_workdays">
                     <el-checkbox v-for="w in weekdayOptions" :key="`free-wd-${w.value}`" :value="w.value">{{ w.label }}</el-checkbox>
                   </el-checkbox-group>
                 </div>
+                <div v-if="ruleForm.extra.rule_type === 'rotation'" class="free-time-row">
+                  <span>不按星期限定日期。项目负责人在「现场轮休」按人员生成六上休一日历，预览并发布后生效。</span>
+                  <el-button link type="primary" @click="$router.push('/rotation')">打开个人排班</el-button>
+                </div>
                 <div class="free-time-row">
                   <div class="free-time-label">工作时长</div>
                   <el-select v-model="ruleForm.extra.free_work_hours_mode" style="width: 150px">
-                    <el-option label="不限制" value="unlimited" />
+                    <el-option v-if="ruleForm.extra.rule_type !== 'rotation'" label="不限制" value="unlimited" />
                     <el-option v-for="h in Array.from({ length: 24 }, (_, i) => i + 1)" :key="`free-hour-${h}`" :label="`${h}小时`" :value="`limit:${h}`" />
                   </el-select>
                   <span class="free-time-tip">少于所选工作时长将记为异常；超过部分按加班规则计算。选择「不限制」则不校验最低工时。</span>
@@ -1152,7 +1156,7 @@
               <div><span>更多设置</span><strong>{{ shiftSettingMoreText }}</strong></div>
             </div>
           </template>
-          <el-form-item label="特殊日期">
+          <el-form-item label="特殊日期" v-if="ruleForm.extra.rule_type !== 'rotation'">
             <el-button v-if="ruleForm.extra.rule_type === 'fixed'" @click="openSpecialDateDialog('must')">添加必须打卡日期</el-button>
             <el-button @click="openSpecialDateDialog('no')">添加无需打卡日期</el-button>
           </el-form-item>
@@ -1190,11 +1194,12 @@
             </div>
           </div>
           <el-form-item label="节假日">
-            <el-checkbox v-model="ruleForm.extra.legal_holiday_no_punch">公司节假日表内日期不用打卡</el-checkbox>
-            <span class="holiday-desc">未列日期按普通工作日或周末执行；节假日表由系统管理员维护</span>
+            <el-checkbox v-if="ruleForm.extra.rule_type !== 'rotation'" v-model="ruleForm.extra.legal_holiday_no_punch">公司节假日表内日期不用打卡</el-checkbox>
+            <span v-if="ruleForm.extra.rule_type === 'rotation'" class="holiday-desc">是否出勤按已发布的个人日历执行；公司节假日标签及加班核算保留。</span>
+            <span v-else class="holiday-desc">未列日期按普通工作日或周末执行；节假日表由系统管理员维护</span>
             <el-button link type="primary" class="hint-link" @click="openHolidayCalendar">查看节假日表与日历</el-button>
           </el-form-item>
-          <el-form-item :label="ruleForm.extra.rule_type === 'free' ? '打卡设置' : '休息日'">
+          <el-form-item v-if="ruleForm.extra.rule_type !== 'rotation'" :label="ruleForm.extra.rule_type === 'free' ? '打卡设置' : '休息日'">
             <el-button @click="openRestdaySettingDialog">设置</el-button>
             <span class="restday-desc">{{ restdaySummaryText }}</span>
           </el-form-item>
@@ -3534,6 +3539,7 @@ const ruleTypeOptions = [
   { value: 'fixed', label: '固定时间上下班', desc: '所有人按相同时间打卡，适用于办公室坐班。' },
   { value: 'shift', label: '按排班上下班', desc: '按班次结果或自选班次打卡，适用于门店/流水线。' },
   { value: 'free', label: '自由上下班', desc: '不固定时间，可随时打卡只统计工时。' },
+  { value: 'rotation', label: '现场轮休', desc: '按个人日期排班，自由上下班，休息日出勤确认后攒休。' },
 ]
 const weekdayOptions = [
   { label: '周一', value: 1 },
@@ -4060,9 +4066,11 @@ function inferRuleType(workHourType?: string) {
 
 function workHourTypeFromRuleType(ruleType?: string) {
   if (ruleType === 'shift') return 'comprehensive'
-  if (ruleType === 'free') return 'flexible'
+  if (isFlexibleRule(ruleType)) return 'flexible'
   return 'standard'
 }
+
+function isFlexibleRule(type?: string) { return type === 'free' || type === 'rotation' }
 
 const defaultRuleExtra = () => ({
   employee_type: '固定工',
@@ -4405,9 +4413,11 @@ function toggleRuleScope(rule: any) {
 function changeRuleType(ruleType: string) {
   const extra = { ...defaultRuleExtra(), ...(ruleForm.value.extra || {}) }
   extra.rule_type = ruleType
+  if (ruleType === 'rotation') extra.scope_mode = 'project'
   if (!Array.isArray(extra.time_segments)) extra.time_segments = []
   if (!Array.isArray(extra.shift_templates)) extra.shift_templates = []
-  if (ruleType === 'free') {
+  if (isFlexibleRule(ruleType)) {
+    if (ruleType === 'rotation' && !String(extra.free_work_hours_mode).startsWith('limit:')) extra.free_work_hours_mode = 'limit:12'
     if (!Array.isArray(extra.free_workdays) || !extra.free_workdays.length) {
       extra.free_workdays = [1, 2, 3, 4, 5]
     }
@@ -5797,10 +5807,10 @@ function buildRulePayload() {
   if (!patchMonthLimitOptions.includes(String(extra.patch_month_limit || ''))) extra.patch_month_limit = '无限制'
   if (!patchDeadlineOptions.includes(String(extra.patch_deadline || ''))) extra.patch_deadline = '不设置'
   extra.time_segments = (extra.time_segments || []).map((segment: any) => defaultTimeSegment(segment))
-  if (extra.rule_type === 'free') {
+  if (isFlexibleRule(extra.rule_type)) {
     extra.time_segments = [defaultTimeSegment({
       name: '自由上下班',
-      weekdays: [...extra.free_workdays],
+      weekdays: extra.rule_type === 'rotation' ? [1, 2, 3, 4, 5, 6, 7] : [...extra.free_workdays],
       check_in_required: false,
       check_out_required: false,
       clock_in: '00:00',
@@ -5848,18 +5858,18 @@ function buildRulePayload() {
   return {
     name: ruleForm.value.name,
     work_hour_type: workHourType,
-    clock_in_time: extra.rule_type === 'free'
+    clock_in_time: isFlexibleRule(extra.rule_type)
       ? null
       : (extra.rule_type === 'shift'
         ? (firstShiftTpl?.clock_in || firstSegment?.clock_in || ruleForm.value.clock_in_time || null)
         : (firstSegment?.clock_in || ruleForm.value.clock_in_time || null)),
-    clock_out_time: extra.rule_type === 'free'
+    clock_out_time: isFlexibleRule(extra.rule_type)
       ? null
       : (extra.rule_type === 'shift'
         ? (firstShiftTpl?.clock_out || firstSegment?.clock_out || ruleForm.value.clock_out_time || null)
         : (firstSegment?.clock_out || ruleForm.value.clock_out_time || null)),
     flexible_minutes: Number(ruleForm.value.flexible_minutes || 0),
-    work_hours_per_day: extra.rule_type === 'free'
+    work_hours_per_day: isFlexibleRule(extra.rule_type)
       ? Number((freeLimitHours && freeLimitHours > 0) ? freeLimitHours : 8)
       : Number(ruleForm.value.work_hours_per_day || 8),
     overtime_weekday_rate: Number(ruleForm.value.overtime_weekday_rate || 1.5),
@@ -5950,7 +5960,11 @@ async function submitRule() {
     ElMessage.warning('按排班上下班时，请至少配置一个班次')
     return
   }
-  if (extra.rule_type !== 'free') {
+  if (extra.rule_type === 'rotation' && !String(extra.free_work_hours_mode).startsWith('limit:')) {
+    ElMessage.warning('现场轮休请设置每日工作时长')
+    return
+  }
+  if (!isFlexibleRule(extra.rule_type)) {
     for (const segment of extra.time_segments) {
       if (!segment.clock_in || !segment.clock_out) {
         ElMessage.warning('请完整填写上下班时间')

@@ -84,6 +84,9 @@ class AttendanceApprovalEffectConsumer:
 
         touched_dates: set[tuple[int, date]] = set()
         for row in rows:
+            if row.get("effect_type") == "overtime":
+                from app.services.rotation import ensure_overtime_not_credited
+                await ensure_overtime_not_credited(db, row["employee_id"], row["work_date"], row.get("pay_policy"))
             effect = await _upsert_effect(db, row)
             work_date = getattr(effect, "work_date", None)
             employee_id = getattr(effect, "employee_id", None)

@@ -3,6 +3,7 @@
 from sqlalchemy import event, select, inspect
 from sqlalchemy.orm import Session
 from app.models.field_service import FieldAttendanceSegment
+from app.models.rotation import RotationDay
 from app.models.attendance import (
     AttendanceRecord,
     AttendancePunchTimeRecord,
@@ -21,6 +22,7 @@ def prevent_locked_period_writes(session, flush_context, instances):
             item,
             (
                 FieldAttendanceSegment,
+                RotationDay,
                 AttendanceRecord,
                 AttendancePunchTimeRecord,
                 AttendanceEffect,

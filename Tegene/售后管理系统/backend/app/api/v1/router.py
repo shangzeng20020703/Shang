@@ -11,6 +11,7 @@ for name, prefix, title in [
     ('notifications','/notifications','通知'),('upload','/upload','文件'),
     ('audit_log','/audit-logs','审计'),('event_monitor','/event-monitor','业务事件'),
     ('field_service','/field','售后现场'),
+    ('rotation','/rotation','现场轮休'),
     ('system_settings','/system-settings','系统设置')]:
     router.include_router(import_module('app.api.v1.'+name).router,prefix=prefix,tags=[title])
 # The source designer calls company directory under /payroll; expose only directory routes.

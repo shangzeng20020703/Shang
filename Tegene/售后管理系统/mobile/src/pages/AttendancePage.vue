@@ -17,6 +17,10 @@
               <strong>{{ runtime.project ? runtime.project.name : '当前未关联项目' }}</strong>
               <span>{{ runtime.project ? `按项目规则打卡 · ${runtime.rule?.name || '规则加载中'}` : (runtime.has_rule ? `当前按个人规则：${runtime.rule?.name}` : '请联系负责人分配项目') }}</span>
             </div>
+            <div class="project-punch-context">
+              <template v-if="runtime?.rotation"><strong>今日安排：{{runtime.rotation.label}}</strong><span v-if="runtime.rotation.required_hours">应满足 {{runtime.rotation.required_hours}} 小时，不限制上下班时刻</span><span v-if="runtime.rotation.kind==='pending'">排班尚未发布，实际打卡留存并待负责人确认。</span><span v-if="runtime.rotation.kind==='rest'">正常轮休无需打卡，若实际陪产可打卡后申请出勤确认。</span></template>
+              <ion-button fill="clear" size="small" router-link="/app/rotation">查看排班、申请调班与调休</ion-button>
+            </div>
             <details v-if="runtime?.project_segments?.length" class="project-punch-context">
               <summary>今日项目记录 · {{runtime.project_segments.length}} 段</summary>
               <div v-for="part in runtime.project_segments" :key="part.segment_id">
