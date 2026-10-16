@@ -18,7 +18,7 @@
         <el-table-column prop="name" label="项目名称" min-width="260"/>
         <el-table-column label="项目组长" width="120"><template #default="{row}">{{row.manager_name || '待指定'}}</template></el-table-column>
         <el-table-column label="考勤规则" min-width="180"><template #default="{row}"><span v-if="row.rule_name">{{row.rule_name}}</span><el-tag v-else type="info">待配置</el-tag></template></el-table-column>
-        <el-table-column label="参与人员" width="125"><template #default="{row}">{{row.member_count || 0}} 人<span v-if="pendingCount(row)"> · 待生效 {{pendingCount(row)}}</span></template></el-table-column>
+        <el-table-column label="参与人员" min-width="205"><template #default="{row}"><template v-if="savedMemberCount(row)"><strong>已保存 {{savedMemberCount(row)}} 人</strong><div class="member-count-detail">{{row.member_count || 0}} 人已生效<span v-if="pendingCount(row)"> · {{pendingCount(row)}} 人{{row.rule_id ? '待启用' : '待建立规则后启用'}}</span></div></template><span v-else class="muted">尚未分配</span></template></el-table-column>
         <el-table-column label="操作" width="115" fixed="right"><template #default="{row}"><el-button link type="primary" @click.stop="openProject(row)">{{canManage(row) ? '配置项目' : '查看项目'}}</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="rows.length" layout="prev, pager, next" class="pagination"/>
@@ -36,6 +36,10 @@
       <template v-if="selected">
         <div class="project-heading"><span class="muted">{{selected.code}}</span><h2>{{selected.name}}</h2></div>
         <el-alert v-if="formError" :title="formError" type="error" :closable="false" show-icon class="notice"/>
+        <div v-if="pendingMembers.length && !localProject?.rule_id" class="saved-roster notice">
+          <el-alert :title="`已保存${savedMemberCount(localProject)}人，其中${pendingMembers.length}人待建立规则后启用`" type="success" :closable="false" show-icon/>
+          <el-button v-if="canManage(selected) && hasAssignedGroupMember && !configDirty" type="primary" @click="openProjectRule">下一步：新建现场轮休规则</el-button>
+        </div>
         <section class="config-section">
           <h3>1. 指定项目组长</h3>
           <el-form label-position="top">
@@ -49,7 +53,7 @@
           </el-form>
         </section>
         <section class="config-section">
-          <div class="section-title"><h3>分配组员 <small>{{members.length}} 人已生效，{{pendingMembers.length}} 人待生效</small></h3><el-checkbox v-model="showHistory">显示历史</el-checkbox></div>
+          <div class="section-title"><h3>分配组员 <small>已保存 {{savedMemberCount(localProject)}} 人（{{activeMemberCount}} 人已生效，{{pendingMembers.length}} 人待启用）</small></h3><el-checkbox v-model="showHistory">显示历史</el-checkbox></div>
           <template v-if="canManage(selected)">
             <p v-if="!selected.id || configDirty" class="muted">请先保存上方的项目组长，再分配组员。</p>
             <p v-else-if="!localProject?.rule_id" class="muted">现在可先分配人员；他们会处于“待配置”，建立并保存本项目规则后统一启用。</p>
@@ -60,7 +64,7 @@
           </template>
           <el-table v-if="pendingMembers.length" :data="pendingMembers" class="field-table" empty-text="暂无待配置人员">
             <el-table-column prop="employee_name" label="待配置人员" width="150"/>
-            <el-table-column label="状态"><template #default>{{localProject?.rule_id ? '待统一启用，尚不能打卡' : '待配置规则，尚不能打卡'}}</template></el-table-column>
+            <el-table-column label="状态"><template #default>{{localProject?.rule_id ? '名单已保存，待统一启用；尚不能打卡' : '名单已保存，待建立规则后启用；尚不能打卡'}}</template></el-table-column>
             <el-table-column v-if="canManage(selected)" label="操作" width="170"><template #default="{row}"><span v-if="row.is_leader_auto" class="muted">更换组长后自动更新</span><el-button v-else link type="danger" :disabled="saving" @click="removePendingMember(row)">移出</el-button></template></el-table-column>
           </el-table>
           <el-table :data="members" empty-text="暂无参与人员" class="field-table">
@@ -154,6 +158,7 @@ const regionalLeads=computed(()=>{
 const members=computed(()=>data.value.assignments.filter((a:any)=>a.project_id===selected.value?.id && (showHistory.value || a.is_current)))
 const pendingMembers=computed<any[]>(()=>Array.isArray(data.value.pending_members)?data.value.pending_members.filter((a:any)=>a.project_id===selected.value?.id):[])
 function pendingCount(project:any){return Array.isArray(data.value.pending_members)?data.value.pending_members.filter((a:any)=>a.project_id===project.id).length:0}
+function savedMemberCount(project:any){return project ? (project.member_count || 0)+pendingCount(project) : 0}
 const memberCandidates=computed(()=>data.value.people.filter((p:any)=>p.is_active!==false && p.role==='employee' && p.field_staff_category==='member'))
 const managers=computed(()=>{
   const people=data.value.people.filter((p:any)=>p.role==='employee' && p.field_staff_category==='leader_candidate' && p.is_active!==false)
@@ -205,7 +210,12 @@ async function saveConfig(){
 }
 async function addMembers(){
   saving.value=true;formError.value=''
-  try{await post(`/field/projects/${selected.value.id}/members`,{employee_ids:memberForm.value.employee_ids});memberForm.value={employee_ids:[]};await loadLocal();ElMessage.success(localProject.value?.rule_id?'人员已加入项目':'人员已保存为待配置，建立规则后统一启用')}catch(e){formError.value=message(e)}finally{saving.value=false}
+  try{await post(`/field/projects/${selected.value.id}/members`,{employee_ids:memberForm.value.employee_ids})}
+  catch(e){formError.value=message(e);saving.value=false;return}
+  memberForm.value={employee_ids:[]}
+  try{await loadLocal();ElMessage.success(localProject.value?.rule_id?'人员已加入项目':`人员名单已保存：共${savedMemberCount(localProject.value)}人，待建立规则后启用`)}
+  catch{ElMessage.warning('人员名单已保存，但列表刷新失败；请点击“刷新项目”核对')}
+  finally{saving.value=false}
 }
 async function removePendingMember(row:any){
   saving.value=true;formError.value=''
@@ -246,6 +256,6 @@ onMounted(refresh)
 </script>
 <style scoped>
 .workflow{display:flex;gap:30px;flex-wrap:wrap;margin:0 0 24px;color:#567180;font-size:13px}.workflow span{display:flex;align-items:center;gap:9px}.workflow b{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:#e7f3f2;color:#147e73}
-.field-toolbar{justify-content:flex-start;flex-wrap:wrap}.list-count{margin-left:auto;color:#76909b;font-size:13px}.pagination{justify-content:flex-end;margin-top:20px}.muted{color:#70838f;font-size:12px;line-height:1.7}.notice{margin-bottom:18px}.project-heading h2{font-size:23px;margin:8px 0 24px}.config-section{border-top:1px solid #e6edf0;padding:22px 0}.config-section h3{margin:0 0 18px;font-size:16px}.config-section small{color:#8496a2;margin-left:8px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.config-section .el-select{width:100%}.rule-summary{background:#f1f7f7;padding:12px 16px;color:#316d66;border-radius:7px;font-size:13px}.section-title,.member-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.members-form{background:#f7f9fb;border:1px solid #e9eef1;padding:18px;border-radius:8px;margin-bottom:18px}.members-form :deep(.el-date-editor){width:100%}@media(max-width:640px){.config-grid{grid-template-columns:1fr;gap:0}.member-actions{align-items:flex-start;flex-direction:column}}
+.field-toolbar{justify-content:flex-start;flex-wrap:wrap}.list-count{margin-left:auto;color:#76909b;font-size:13px}.pagination{justify-content:flex-end;margin-top:20px}.muted,.member-count-detail{color:#70838f;font-size:12px;line-height:1.7}.notice{margin-bottom:18px}.project-heading h2{font-size:23px;margin:8px 0 24px}.saved-roster{display:flex;align-items:center;gap:12px}.saved-roster .el-alert{flex:1}.config-section{border-top:1px solid #e6edf0;padding:22px 0}.config-section h3{margin:0 0 18px;font-size:16px}.config-section small{color:#8496a2;margin-left:8px}.config-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.config-section .el-select{width:100%}.rule-summary{background:#f1f7f7;padding:12px 16px;color:#316d66;border-radius:7px;font-size:13px}.section-title,.member-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.members-form{background:#f7f9fb;border:1px solid #e9eef1;padding:18px;border-radius:8px;margin-bottom:18px}.members-form :deep(.el-date-editor){width:100%}@media(max-width:640px){.config-grid{grid-template-columns:1fr;gap:0}.member-actions,.saved-roster{align-items:flex-start;flex-direction:column}.saved-roster .el-alert{width:100%}}
 .leader-join{border-top:1px solid #e9eef1;margin-top:16px;padding-top:16px}
 </style>

@@ -1,0 +1,11 @@
+**/node_modules
+**/.venv
+**/__pycache__
+**/dist
+**/.env
+backend/data
+backend/uploads
+.runtime
+.git
+evidence
+docs
