@@ -214,6 +214,22 @@ async def main():
             assert sorted(r.status_code for r in responses)==[200,409], [(r.status_code,r.text) for r in responses]
             winning=next(r.json()["id"] for r in responses if r.status_code==200)
             await req("POST",f"/rotation/claims/{winning}/review","manager",json={"action":"revoke","note":"验收完成退回额度"})
+            # A transfer must not strand the employee behind the old project's future calendar.
+            future={"employee_ids":[eid],"start_date":str(day+timedelta(days=30)),"end_date":str(day+timedelta(days=33)),"cycle_start":str(day)}
+            future_preview=await req("POST",f"/rotation/projects/{pid}/preview","manager",json=future)
+            await req("POST",f"/rotation/projects/{pid}/publish?revision={future_preview['revision']}","manager",json=future)
+            target=await req("POST","/field/projects",json={"code":"ROT-NEXT","name":"调动后轮休项目","customer_id":base["customer_id"],"manager_id":base["manager_id"]})
+            await req("PUT",f"/field/projects/{target['id']}/configuration",json={"rule_id":rule["id"]})
+            current_directory=await req("GET","/field/directory")
+            assignment=next(a for a in current_directory["assignments"] if a["employee_id"]==eid and a["is_current"])
+            await req("POST",f"/field/assignments/{assignment['id']}/transfer","manager",json={"project_id":target["id"]})
+            next_preview=await req("POST",f"/rotation/projects/{target['id']}/preview","manager",json=future)
+            await req("POST",f"/rotation/projects/{target['id']}/publish?revision={next_preview['revision']}","manager",json=future)
+            async with async_session() as db:
+                transferred=await rotation.day_row(db,eid,day+timedelta(days=30))
+                assert transferred.project_id==target['id']
+                historical=await rotation.day_row(db,eid,day)
+                assert historical.project_id==pid
             async with async_session() as db:
                 summary=await db.scalar(select(AttendanceMonthSummary).where(AttendanceMonthSummary.employee_id==eid,AttendanceMonthSummary.year==rest_day.year,AttendanceMonthSummary.month==rest_day.month))
                 if summary:
