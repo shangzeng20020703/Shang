@@ -3,6 +3,7 @@ import { get, post } from '@/utils/request'
 export interface LoginPolicy {
   mode: 'password' | 'hybrid' | 'wecom_only'
   password_enabled: boolean
+  local_passwordless_enabled: boolean
   wecom_enabled: boolean
   configuration_ready: boolean
 }

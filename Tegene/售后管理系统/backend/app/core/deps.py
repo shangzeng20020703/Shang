@@ -54,7 +54,7 @@
 =============================================================================
 """
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +71,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login
 
 
 async def get_current_user(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     token: str = Depends(oauth2_scheme),
 ) -> Employee:
@@ -133,7 +134,9 @@ async def get_current_user(
         raise HTTPException(status_code=403, detail="账号已被停用")
 
     from app.services.wecom_auth import validate_session_identity
-    await validate_session_identity(db, user, payload)
+    await validate_session_identity(
+        db, user, payload, request.client.host if request.client else None
+    )
     return user
 
 

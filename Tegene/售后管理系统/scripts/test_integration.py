@@ -109,6 +109,9 @@ async def main():
         )
         passed.append("overlapping assignments rejected atomically")
         day = today() + timedelta(days=12)
+        baseline_scheduled = (await req(
+            "GET", "/field/dashboard", "manager", params={"day": str(day)}
+        ))["total_scheduled"]
         assignment_data = {
             "site_id": site["id"], "employee_id": staff_id,
             "start_date": str(day), "end_date": str(day + timedelta(days=2)),
@@ -124,7 +127,7 @@ async def main():
         await req("POST", f"/field/assignments/{new['id']}/cancel", "regional")
         assert (
             await req("GET", "/field/dashboard", "manager", params={"day": str(day)})
-        )["total_scheduled"] == 0
+        )["total_scheduled"] == baseline_scheduled
         passed.append("assigned regional lead creates and cancels future shifts with FK integrity")
         for endpoint in ["clock-in", "clock-out"]:
             await req(

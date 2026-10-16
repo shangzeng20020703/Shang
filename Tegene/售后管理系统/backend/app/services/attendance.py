@@ -3011,17 +3011,20 @@ class AttendanceRecordService:
             )
 
         if runtime is None:
+            from app.services.field_membership import managed_field_person
+            field_blocked = await managed_field_person(db, employee_id)
+            blocked_reason = "项目或首次个人排班尚未生效，暂不能打卡" if field_blocked else None
             return {
                 "date": target_date.isoformat(),
                 "has_rule": False,
                 "phase": data.phase or "clock_in",
-                "status": "normal",
-                "status_text": "正常",
+                "status": "pending" if field_blocked else "normal",
+                "status_text": "待配置" if field_blocked else "正常",
                 "minutes": 0,
-                "is_valid": True,
-                "method_valid": True,
+                "is_valid": not field_blocked,
+                "method_valid": not field_blocked,
                 "window_valid": True,
-                "anomalies": [],
+                "anomalies": [blocked_reason] if blocked_reason else [],
             }
 
         rule = runtime["rule"]
@@ -4309,7 +4312,7 @@ class AttendanceRecordService:
             异常列表为空表示打卡合法，非空表示存在异常（记录仍会写入，由 HR 后续处理）
         """
         from app.services import field_membership as membership
-        field_context = await membership.prepare_punch(db, employee_id, data) if await membership.managed_field_person(db, employee_id) else None
+        field_context = await membership.prepare_punch(db, employee_id, data, phase="clock_in") if await membership.managed_field_person(db, employee_id) else None
         now = field_context["now"] if field_context else datetime.now(timezone.utc)
         # 业务日期固定使用 UTC+8（中国标准时间），不依赖服务器本地时区设置
         _cst = timezone(timedelta(hours=8))
@@ -4452,7 +4455,7 @@ class AttendanceRecordService:
             返回的 record.status 已更新为当日最终考勤状态
         """
         from app.services import field_membership as membership
-        field_context = await membership.prepare_punch(db, employee_id, data) if await membership.managed_field_person(db, employee_id) else None
+        field_context = await membership.prepare_punch(db, employee_id, data, phase="clock_out") if await membership.managed_field_person(db, employee_id) else None
         now = field_context["now"] if field_context else datetime.now(timezone.utc)
         # 业务日期固定使用 UTC+8（中国标准时间），不依赖服务器本地时区设置
         _cst = timezone(timedelta(hours=8))

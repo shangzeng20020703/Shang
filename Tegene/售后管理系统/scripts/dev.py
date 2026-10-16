@@ -76,10 +76,16 @@ def start():
         cwd = ROOT / (
             "backend" if name == "api" else "frontend" if name == "web" else "mobile"
         )
+        process_env = os.environ.copy()
+        if name == "api":
+            # Local dev server binds to loopback; auth.py enforces additional
+            # development, SQLite and loopback checks before passwordless login.
+            process_env.setdefault("LOCAL_PASSWORDLESS_LOGIN", "true")
         with (STATE / (name + ".log")).open("a") as log:
             process = subprocess.Popen(
                 cmd,
                 cwd=cwd,
+                env=process_env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,

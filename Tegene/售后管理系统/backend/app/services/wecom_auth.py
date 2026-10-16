@@ -154,8 +154,10 @@ async def complete(db, client, state, verifier, code):
         "binding_id": binding.id}), "token_type": "bearer"}
 
 
-async def validate_session_identity(db, user, payload):
+async def validate_session_identity(db, user, payload, client_host=None):
     method = payload.get("auth_method", "password")
+    if method == "local_passwordless" and not settings.allows_local_passwordless_login(client_host):
+        raise HTTPException(401, "本机免密演示已关闭，请重新登录")
     if settings.LOGIN_MODE == "wecom_only" and method != "wecom":
         raise HTTPException(401, "请使用企业微信重新登录")
     if method == "wecom":

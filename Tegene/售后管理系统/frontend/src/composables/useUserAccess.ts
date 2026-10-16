@@ -8,6 +8,7 @@ const ROLE_LABELS: Record<string, string> = {
   manager: '项目经理',
   regional_lead: '区域组长',
   aftersales_manager: '售后经理',
+  project_leader: '项目组长',
   finance: '财务',
   employee: '售后人员',
 }
@@ -36,6 +37,7 @@ export function useUserAccess() {
     if (roles.value.includes('asset_admin')) return 'asset_admin'
     if (roles.value.includes('hr')) return 'hr'
     if (roles.value.includes('manager')) return 'manager'
+    if (roles.value.includes('project_leader')) return 'project_leader'
     if (roles.value.includes('finance')) return 'finance'
     return roles.value[0] || 'employee'
   })

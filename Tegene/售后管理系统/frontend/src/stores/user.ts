@@ -4,6 +4,7 @@ import { post, get } from '@/utils/request'
 import {
   clearWebAuthSession,
   getWebAuthToken,
+  hasWebManagementAccess,
   setWebAuthRoleSnapshot,
   setWebAuthToken,
 } from '@/utils/authSession'
@@ -73,6 +74,7 @@ export const useUserStore = defineStore('user', () => {
       skipDefaultErrorHandler: true,
     })
     let roles: string[] = []
+    let rolesLoaded = false
 
     try {
       // 角色归属不内嵌在 /auth/me 中，而是单独走 RBAC 接口。
@@ -85,14 +87,19 @@ export const useUserStore = defineStore('user', () => {
             .filter(Boolean),
         ),
       )
+      rolesLoaded = true
     } catch {
       roles = []
     }
 
+    // The management-session endpoint also accepts a project leader appointed
+    // through field_projects.manager_id. Only derive this UI role after both
+    // the server-side session check and the RBAC lookup succeed.
+    const isProjectLeader = rolesLoaded && !data.is_superuser &&
+      !hasWebManagementAccess(roles, false)
     const normalizedRoles =
       data.is_superuser ? ['admin']
-        : roles.length ? roles
-          : ['employee']
+        : [...(roles.length ? roles : ['employee']), ...(isProjectLeader ? ['project_leader'] : [])]
 
     // 挑一个“主角色”放到 role 字段里，兼容仍按单角色读取的旧页面。
     const role =
@@ -100,6 +107,7 @@ export const useUserStore = defineStore('user', () => {
         : normalizedRoles.includes('admin') ? 'admin'
           : normalizedRoles.includes('aftersales_manager') ? 'aftersales_manager'
             : normalizedRoles.includes('regional_lead') ? 'regional_lead'
+          : normalizedRoles.includes('project_leader') ? 'project_leader'
           : normalizedRoles.includes('asset_admin') ? 'asset_admin'
             : normalizedRoles.includes('hr') ? 'hr'
               : normalizedRoles.includes('manager') ? 'manager'

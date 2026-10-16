@@ -24,7 +24,7 @@ from app.models.field_service import FieldAttendanceSegment, FieldProject
 from app.models.rotation import RotationDay, RotationClaim, RotationLedger, RotationAccount
 from app.models.audit_log import AuditLog
 from app.models.employee_role import EmployeeRole
-from app.services import rotation, field_membership
+from app.services import rotation, field_membership, field_pending
 from app.services.attendance import AttendanceRecordService as attendance, MonthSummaryService
 
 
@@ -61,11 +61,13 @@ async def main():
         base = directory["projects"][0]
         person = await req("POST", "/field/people", json={"name":"轮休验收工程师", "phone":"19911112222", "employee_no":"ROT-QA", "role":"employee"})
         eid = person["id"]
+        lead = await req("POST", "/field/people", json={"name":"轮休验收组长", "phone":"19911118888", "employee_no":"ROT-LEAD", "role":"employee", "field_staff_category":"leader_candidate"})
         tokens["engineer"] = (await req("POST", "/auth/login", "engineer", json={"phone":"19911112222", "password":"585858"}))["access_token"]
         rule = await req("POST", "/attendance/rules", status=201, json={"name":"轮休验收12小时", "work_hour_type":"flexible", "work_hours_per_day":12,
             "effective_date":str(day), "require_gps":False, "require_photo":False, "extra_config":{"scope_mode":"project", "rule_type":"rotation", "free_work_hours_mode":"limit:12", "free_day_start_time":"05:00"}})
-        project = await req("POST", "/field/projects", json={"code":"ROT-QA", "name":"轮休验收项目", "customer_id":base["customer_id"], "manager_id":2})
+        project = await req("POST", "/field/projects", json={"code":"ROT-QA", "name":"轮休验收项目", "customer_id":base["customer_id"], "manager_id":lead["id"]})
         pid = project["id"]
+        tokens["manager"] = (await req("POST", "/auth/login", json={"phone":"19911118888", "password":"585858"}))["access_token"]
         async with async_session() as db:
             db.add(EmployeeRole(employee_id=3, role_name="regional_lead", granted_by=1))
             await db.commit()
@@ -77,10 +79,10 @@ async def main():
         backup=await req("POST", "/field/people", json={"name":"协管区域组长","phone":"19911117777","employee_no":"ROT-REGION-BACKUP","role":"regional_lead"})
         tokens["backup"]=(await req("POST", "/auth/login", "backup", json={"phone":"19911117777","password":"585858"}))["access_token"]
         await req("PUT", f"/field/projects/{pid}/configuration", json={"rule_id":rule["id"]})
-        with patch.object(field_membership, "clock_now", side_effect=lambda: moment), patch.object(rotation, "today", side_effect=lambda: simulated_today):
+        with patch.object(field_membership, "clock_now", side_effect=lambda: moment), patch.object(field_pending, "clock_now", side_effect=lambda: moment), patch.object(rotation, "today", side_effect=lambda: simulated_today):
             await req("POST", f"/field/projects/{pid}/members", "staff", json={"employee_ids":[eid]})
             runtime = await req("GET", "/attendance/my/runtime", "engineer")
-            assert runtime["rotation"]["kind"] == "pending"
+            assert runtime["field_managed"] and not runtime["has_rule"] and runtime["project_context"] is None
             async with async_session() as db:
                 assert not await MonthSummaryService._expected_work_day(db, eid, day, None)
             body = {"employee_ids":[eid], "start_date":str(day), "end_date":str(day+timedelta(days=27)), "cycle_start":str(day),
@@ -103,7 +105,7 @@ async def main():
                 "primary_lead_id":3,"assistant_lead_ids":[backup["id"]],
                 "reason":"为代提交排班配置独立区域审核人"})
             runtime = await req("GET", "/attendance/my/runtime", "engineer")
-            assert runtime["rotation"]["kind"] == "work" and float(runtime["rotation"]["required_hours"]) == 12
+            assert runtime.get("rotation", {}).get("kind") == "work" and float(runtime["rotation"]["required_hours"]) == 12, runtime
             assert runtime["rotation"]["shift_label"] == "night"
             assert runtime["check"]["check_out_required"]
             async with async_session() as db:
@@ -263,7 +265,8 @@ async def main():
             assert not regional_read["can_manage"]
             await req("POST",f"/rotation/projects/{other['id']}/preview","staff",status=403,json=body)
             # A project leader's own schedule skips that leader's approval node.
-            await req("POST", f"/field/projects/{pid}/members", "staff", json={"employee_ids":[2]})
+            # The appointed leader was added to this project's roster when its
+            # rule became active; no separate membership request is needed.
             own_date=day+timedelta(days=35)
             own=await req("POST","/rotation/claims","manager",json={"project_id":pid,"kind":"schedule",
                 "days":[{"date":str(own_date),"kind":"work"}],"reason":"项目组长本人未来排班"})

@@ -89,16 +89,16 @@ async def main():
             assert response.status_code == status, response.text
             return response.json()
         result = await get()
-        assert result['people_total'] == 3  # Project leader also clocks in; regional/aftersales management does not.
-        assert result['summary']['people'] == 3 and len(result['rows']) == 4
+        assert result['people_total'] == 3  # Project leader is auto-enrolled; regional/aftersales management does not clock in.
+        assert result['summary']['people'] == 4 and len(result['rows']) == 5
         assert result['summary']['punched'] == 1 and result['summary']['partial'] == 1
-        assert result['summary']['complete'] == 0 and result['summary']['unpunched'] == 2
+        assert result['summary']['complete'] == 0 and result['summary']['unpunched'] == 3
         assert result['summary']['abnormal'] == 1
         assert {a['name']:a['value'] for a in result['summary']['anomalies']}['迟到'] == 1
         assert {a['name']:a['value'] for a in result['summary']['anomalies']}['待核对'] == 1
-        assert len(result['trend']) == 7 and result['trend'][-1]['people'] == 3
+        assert len(result['trend']) == 7 and result['trend'][-1]['people'] == 4
         assert all(point['people'] == 0 for point in result['trend'][:-1])
-        assert sum(p['people'] for p in result['project_stats']) == 4  # cross-project counts differ intentionally.
+        assert sum(p['people'] for p in result['project_stats']) == 5  # cross-project counts differ intentionally.
         async with async_session() as db:
             manager_interval = await db.scalar(select(FieldMembership).where(FieldMembership.assignment_id == a_void.id))
             manager_interval.started_at = start+timedelta(hours=9)

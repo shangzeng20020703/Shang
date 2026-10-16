@@ -304,6 +304,12 @@ const canAccessAdmin = computed(() => hasAnyRole('admin'))
 const canAccessFixedAssets = computed(() => hasAnyRole('admin', 'asset_admin'))
 
 const navigationGroups = computed(() => {
+  if (roles.value.includes('project_leader')) {
+    return [
+      { title: '工作台', items: [{ path:'/field', label:'项目库', icon:Connection }] },
+      { title: '考勤管理', items: [{ path:'/rotation', label:'现场轮休', icon:Clock }] },
+    ]
+  }
   const admin = hasAnyRole('admin', 'hr')
   const roster = hasAnyRole('admin', 'hr', 'aftersales_manager')
   const rules = hasAnyRole('admin', 'hr', 'regional_lead', 'aftersales_manager')
@@ -340,7 +346,12 @@ function closeMobileSidebar() {
   mobileSidebarOpen.value = false
 }
 
-function openMobile(path = '') { window.open((import.meta.env.DEV ? 'http://127.0.0.1:5187/mobile' : '/mobile') + path, '_blank', 'noopener') }
+function openMobile(path = '') {
+  const base = import.meta.env.DEV
+    ? (import.meta.env.VITE_MOBILE_URL || 'http://127.0.0.1:5187/mobile')
+    : '/mobile'
+  window.open(base.replace(/\/$/, '') + path, '_blank', 'noopener')
+}
 
 function handleCommand(command: string) {
   switch (command) {

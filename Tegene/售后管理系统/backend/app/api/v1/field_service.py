@@ -62,6 +62,21 @@ async def add_project_members(project_id: int, data: ProjectMembersInput,
     return await service.add_project_members(db, user, project_id, data)
 
 
+@router.post("/projects/{project_id}/members/activate")
+async def activate_project_members(project_id: int,
+                                   db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_pending import activate_members
+    return await service.audited("activate-members", activate_members)(db, user, project_id)
+
+
+@router.delete("/projects/{project_id}/pending-members/{pending_id}")
+async def remove_pending_project_member(project_id: int, pending_id: int,
+                                        db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_pending import remove_pending
+    return await service.audited("remove-pending-member", remove_pending)(
+        db, user, project_id, pending_id)
+
+
 @router.post("/projects/{project_id}/members/import")
 async def import_project_members(project_id: int, file: UploadFile = File(...), preview: bool = True,
                                  db=Depends(get_db), user=Depends(get_current_user)):

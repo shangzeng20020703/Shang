@@ -2902,6 +2902,46 @@ async def get_project_rule(
     return rule
 
 
+@router.post("/projects/{project_id}/rule", response_model=AttendanceRuleOut,
+             status_code=status.HTTP_201_CREATED)
+async def create_project_rule(
+    project_id: int,
+    data: AttendanceRuleCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """Create the first rule for a project without granting global-rule write access."""
+    from app.schemas.field_service import SiteInput
+    from app.services import field_service
+    from app.services.field_roles import require_project_manage
+
+    project = await require_project_manage(db, current_user, project_id)
+    if await field_service.project_site(db, project_id):
+        raise HTTPException(409, "项目已有考勤规则，请在项目规则中修改")
+
+    payload = data.model_dump()
+    # Project managers cannot turn a project write into an organisation-wide
+    # rule by supplying a different scope or department in the request body.
+    payload["department_id"] = None
+    payload["location_id"] = None
+    payload["extra_config"] = {
+        **(payload.get("extra_config") or {}),
+        "scope_mode": "project",
+        "project_id": project_id,
+        "assigned_employee_ids": [],
+    }
+    rule = await AttendanceRuleService.create(
+        db, AttendanceRuleCreate.model_validate(payload), current_user=current_user
+    )
+    site = await field_service.save_site(
+        db, current_user,
+        SiteInput(project_id=project_id, name=project.name, address="", rule_id=rule.id),
+    )
+    rule.location_id = site["location_id"]
+    await db.flush()
+    return rule
+
+
 @router.put("/projects/{project_id}/rule", response_model=AttendanceRuleOut)
 async def update_project_rule(
     project_id: int,
@@ -2933,6 +2973,7 @@ async def update_project_rule(
     payload["is_active"] = True
     payload["name"] = copy_name
     payload["location_id"] = site.location_id
+    payload["department_id"] = None
     rule = await AttendanceRuleService.update(db, rule.id,
         AttendanceRuleUpdate.model_validate(payload), current_user=current_user)
     await field_service.save_site(db, current_user,

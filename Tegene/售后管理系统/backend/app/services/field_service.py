@@ -13,6 +13,7 @@ from app.models.field_service import (
     FieldAssignmentDay,
     FieldTegeneProject,
     FieldRegionalAssignment,
+    FieldProjectPendingMember,
 )
 from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
@@ -36,6 +37,38 @@ def today():
 
 def as_dict(row):
     return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+
+
+def person_role(person, active_roles):
+    """Show the person's global role separately from project leader candidacy."""
+    if person.is_superuser:
+        return "admin"
+    return next((role for role in ["admin", "aftersales_manager", "regional_lead", "hr", "manager"]
+                 if role in active_roles), "employee")
+
+
+def field_staff_category(person, active_roles, details, incumbent_ids):
+    """Only active field employees belong in member/leader selector options.
+
+    Older rosters do not have an explicit category. Their project-leader
+    position or current appointment supplies a conservative fallback.
+    """
+    if (not person.is_active or person.status not in {"在职", "试用"}
+            or person.is_superuser or active_roles - {"employee"}):
+        return None
+    # A current project leader must remain in the leader selector even when a
+    # legacy account lacks the field-staff flag or an old profile says member.
+    if person.id in incumbent_ids:
+        return "leader_candidate"
+    if not person.is_field_staff:
+        return None
+    explicit = (details or {}).get("field_staff_category")
+    if explicit in {"member", "leader_candidate"}:
+        return explicit
+    position = "".join((person.position or "").split())
+    if position in {"项目组长候选", "组长候选", "项目组长"}:
+        return "leader_candidate"
+    return "member"
 
 
 async def roles(db, user):
@@ -80,7 +113,9 @@ async def project_ids(db, user):
             .where(FieldAssignment.employee_id == user.id)
         )
     ).all()
-    return own | set(assigned)
+    pending = (await db.scalars(select(FieldProjectPendingMember.project_id).where(
+        FieldProjectPendingMember.employee_id == user.id))).all()
+    return own | set(assigned) | set(pending)
 
 
 async def require_project_manager(db, user, project_id):
@@ -124,6 +159,14 @@ async def directory(db, user):
             | (FieldAssignment.site_id.in_(owned_sites))
         )
     assignments = list((await db.scalars(stmt)).all())
+    pending_stmt = select(FieldProjectPendingMember).where(
+        FieldProjectPendingMember.project_id.in_(pids)).order_by(FieldProjectPendingMember.id)
+    if not admin:
+        owned = {p.id for p in projects if p.manager_id == user.id}
+        pending_stmt = pending_stmt.where(
+            (FieldProjectPendingMember.employee_id == user.id)
+            | (FieldProjectPendingMember.project_id.in_(owned)))
+    pending_rows = list((await db.scalars(pending_stmt)).all())
     es = select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.name)
     if identity & {"aftersales_manager", "regional_lead"} and not identity & {"admin", "hr"}:
         es = es.where(Employee.id.in_(aftersales_person_ids()))
@@ -132,11 +175,26 @@ async def directory(db, user):
             Employee.id.in_(
                 {user.id}
                 | {a.employee_id for a in assignments}
+                | {row.employee_id for row in pending_rows}
                 | {p.manager_id for p in projects}
             )
         )
     es = es.where(Employee.status.in_(["在职", "试用"]))
     people = list((await db.scalars(es)).unique().all())
+    from app.models.field_service import FieldRosterProfile
+    profile_details = {row.employee_id: row.details or {} for row in
+                       (await db.scalars(select(FieldRosterProfile).where(
+                           FieldRosterProfile.employee_id.in_([person.id for person in people])
+                       ))).all()}
+    active_role_rows = (await db.execute(select(EmployeeRole.employee_id, EmployeeRole.role_name).where(
+        EmployeeRole.is_active.is_(True),
+        EmployeeRole.employee_id.in_([person.id for person in people]),
+    ))).all()
+    person_roles = {}
+    for employee_id, role_name in active_role_rows:
+        person_roles.setdefault(employee_id, set()).add(role_name)
+    incumbent_ids = set((await db.scalars(select(FieldProject.manager_id).where(
+        FieldProject.manager_id.is_not(None)))).all())
     from app.models.field_service import FieldMembership
     from app.services.field_membership import utc, clock_now
     intervals = {m.assignment_id: m for m in (await db.scalars(select(FieldMembership).where(FieldMembership.assignment_id.in_([a.id for a in assignments])))).all()}
@@ -149,6 +207,7 @@ async def directory(db, user):
             select(Employee.id, Employee.name).where(
                 Employee.id.in_(
                     {a.employee_id for a in assignments}
+                    | {row.employee_id for row in pending_rows}
                     | {p.manager_id for p in projects}
                 )
             )
@@ -163,6 +222,24 @@ async def directory(db, user):
         rule_stmt = rule_stmt.where(AttendanceRule.id.in_({s.rule_id for s in sites}))
     rules = list((await db.scalars(rule_stmt)).all())
     rule_names = {r.id: r.name for r in rules}
+    rule_map = {r.id: r for r in rules}
+    from app.models.rotation import RotationDay
+    first_published = dict(((employee_id, project_id), work_date) for employee_id, project_id, work_date in
+        (await db.execute(select(RotationDay.employee_id, RotationDay.project_id,
+            func.min(RotationDay.work_date)).where(
+                RotationDay.project_id.in_(pids),
+            ).group_by(RotationDay.employee_id, RotationDay.project_id))).all())
+    def can_punch(a):
+        site = site_map[a.site_id]
+        rule = rule_map.get(site.rule_id)
+        if not active(a) or not site.is_active or not project_map[site.project_id].is_active:
+            return False
+        if not rule or not rule.is_active or rule.effective_date > today():
+            return False
+        if (rule.extra_config or {}).get("rule_type") != "rotation":
+            return True
+        first = first_published.get((a.employee_id, site.project_id))
+        return first is not None and first <= today()
     active_sites = {s.project_id: s for s in sites if s.is_active}
     manager_ids = set((await db.scalars(select(EmployeeRole.employee_id).where(
         EmployeeRole.is_active.is_(True), EmployeeRole.role_name.in_(["admin", "aftersales_manager", "regional_lead"])
@@ -193,6 +270,7 @@ async def directory(db, user):
                 "rule_id": active_sites[p.id].rule_id if p.id in active_sites else None,
                 "rule_name": rule_names.get(active_sites[p.id].rule_id, "") if p.id in active_sites else "",
                 "member_count": len({a.employee_id for a in assignments if active(a) and site_map[a.site_id].project_id == p.id}),
+                "pending_member_count": len([row for row in pending_rows if row.project_id == p.id]),
             }
             for p in projects
         ],
@@ -204,6 +282,7 @@ async def directory(db, user):
             {
                 **as_dict(a),
                 "is_current": active(a),
+                "can_punch": can_punch(a),
                 "started_at": intervals[a.id].started_at if a.id in intervals else None,
                 "ended_at": intervals[a.id].ended_at if a.id in intervals else None,
                 "employee_name": names.get(a.employee_id, ""),
@@ -212,6 +291,12 @@ async def directory(db, user):
                 "project_name": project_map[site_map[a.site_id].project_id].name,
             }
             for a in assignments
+        ],
+        "pending_members": [
+            {"id": row.id, "project_id": row.project_id,
+             "employee_id": row.employee_id, "employee_name": names.get(row.employee_id, ""),
+             "status": "pending", "is_leader_auto": bool(row.is_leader_auto)}
+            for row in pending_rows
         ],
         "people": [
             {
@@ -222,6 +307,9 @@ async def directory(db, user):
                 "department_id": p.department_id,
                 "position": p.position,
                 "is_active": p.is_active,
+                "role": person_role(p, person_roles.get(p.id, set())),
+                "field_staff_category": field_staff_category(
+                    p, person_roles.get(p.id, set()), profile_details.get(p.id), incumbent_ids),
                 "can_be_manager": p.is_superuser or p.id in manager_ids,
             }
             for p in people
@@ -265,19 +353,32 @@ async def save_customer(db, user, data, item_id=None):
 
 async def save_project(db, user, data, item_id=None):
     from app.services.field_roles import role_names, require_project_manage, role_in_project
+    from app.core.config import settings
     if item_id:
         await require_project_manage(db, user, item_id)
     elif not await role_names(db, user) & {"admin", "aftersales_manager"}:
         raise HTTPException(403, "仅售后经理可创建项目")
-    customer = await db.get(FieldCustomer, data.customer_id)
-    manager = await db.get(Employee, data.manager_id)
-    if not customer or not customer.is_active or not manager or not manager.is_active:
-        raise HTTPException(422, "客户或负责人无效")
-    if manager.status not in {"在职", "试用"}:
-        raise HTTPException(422, "项目组长须为在职人员")
     obj = await db.get(FieldProject, item_id) if item_id else FieldProject()
     if obj is None:
         raise HTTPException(404, "项目不存在")
+    customer = await db.get(FieldCustomer, data.customer_id)
+    if not customer or not customer.is_active:
+        raise HTTPException(422, "客户无效")
+    if data.manager_id is None:
+        # Existing databases may still have a NOT NULL manager_id column. Only
+        # fresh, isolated local SQLite projects may begin unassigned; an
+        # established leader cannot be silently removed through project edits.
+        if item_id and obj.manager_id is not None:
+            raise HTTPException(422, "不能清空已任命的项目组长")
+        if not item_id and not (settings.ENVIRONMENT == "development" and
+                                settings.DATABASE_URL.startswith("sqlite+aiosqlite:///")):
+            raise HTTPException(422, "请先指定项目组长")
+    else:
+        manager = await db.get(Employee, data.manager_id)
+        if not manager or not manager.is_active:
+            raise HTTPException(422, "负责人无效")
+        if manager.status not in {"在职", "试用"}:
+            raise HTTPException(422, "项目组长须为在职人员")
     if item_id and await role_in_project(db, user, item_id) == "regional_lead":
         unchanged = (data.code.strip(), data.name.strip(), data.customer_id,
                      data.description.strip(), data.is_active)
@@ -298,6 +399,9 @@ async def save_project(db, user, data, item_id=None):
         from app.models.field_service import FieldProjectLeaderHistory
         db.add(FieldProjectLeaderHistory(project_id=obj.id, previous_employee_id=previous_manager_id,
                                          employee_id=obj.manager_id, changed_by=user.id))
+    if obj.manager_id is not None and previous_manager_id != obj.manager_id:
+        from app.services.field_pending import sync_project_leader
+        await sync_project_leader(db, user, obj, previous_manager_id)
     return as_dict(obj)
 
 
@@ -332,6 +436,10 @@ async def save_site(db, user, data, item_id=None):
         setattr(obj, key, value)
     db.add(obj)
     await db.flush()
+    # A newly saved project rule turns the complete pending roster into active
+    # participation only if everyone passes the same conflict preflight.
+    from app.services.field_pending import activate_members
+    await activate_members(db, user, project.id, fail_on_conflict=False)
     return as_dict(obj)
 
 
@@ -379,11 +487,14 @@ async def configure_project(db, user, project_id, data):
     from app.schemas.field_service import SiteInput
     from app.services.field_roles import record_project_leader_change
     project = await require_project_manager(db, user, project_id)
+    previous_manager_id = project.manager_id
     if data.manager_id is not None and data.manager_id != project.manager_id:
         manager = await db.get(Employee, data.manager_id)
         if not manager or not manager.is_active or manager.status not in {"在职", "试用"}:
             raise HTTPException(422, "请选择有效的项目负责人")
         await record_project_leader_change(db, user, project, data.manager_id)
+        from app.services.field_pending import sync_project_leader
+        await sync_project_leader(db, user, project, previous_manager_id)
     if data.rule_id is not None:
         site = await project_site(db, project.id)
         await save_site(db, user, SiteInput(project_id=project.id, name=project.name,
@@ -617,7 +728,7 @@ async def list_people(db, user):
     from app.models.organization import Department
     from app.schemas.field_roster import RosterFields, RosterDetails
     from app.services.field_membership import clock_now
-    profiles = {p.employee_id: p.details for p in (await db.scalars(select(FieldRosterProfile))).all()}
+    profiles = {p.employee_id: p.details or {} for p in (await db.scalars(select(FieldRosterProfile))).all()}
     departments = dict((await db.execute(select(Department.id, Department.name))).all())
     now = clock_now()
     current_projects = dict((await db.execute(select(FieldMembership.employee_id, FieldProject.name)
@@ -636,7 +747,9 @@ async def list_people(db, user):
     ).all()
     mapping = {}
     for employee_id, role in role_rows:
-        mapping.setdefault(employee_id, []).append(role)
+        mapping.setdefault(employee_id, set()).add(role)
+    incumbent_ids = set((await db.scalars(select(FieldProject.manager_id).where(
+        FieldProject.manager_id.is_not(None)))).all())
     if "aftersales_manager" in operator_roles and not operator_roles & {"admin", "hr"}:
         from app.services.field_roles import aftersales_person_ids
         scoped_ids = set((await db.scalars(aftersales_person_ids())).all())
@@ -659,13 +772,10 @@ async def list_people(db, user):
             status=p.status,
             wecom_userid=bindings[p.id].userid if p.id in bindings else "",
             wecom_corp_id=bindings[p.id].corp_id if p.id in bindings else "",
-            role="admin"
-            if p.is_superuser
-            else next((r for r in ["admin", "aftersales_manager", "regional_lead", "hr", "manager"]
-                       if r in mapping.get(p.id, [])),
-                      "employee"),
-            field_role=("project_leader" if await db.scalar(select(FieldProject.id).where(
-                FieldProject.manager_id == p.id).limit(1)) else None),
+            role=person_role(p, mapping.get(p.id, set())),
+            field_role="project_leader" if p.id in incumbent_ids else None,
+            field_staff_category=field_staff_category(
+                p, mapping.get(p.id, set()), profiles.get(p.id), incumbent_ids),
         )
         for p in rows
     ]
@@ -697,6 +807,9 @@ async def save_person(db, user, data, item_id=None):
     if item_id and not row:
         raise HTTPException(404, "人员不存在")
     existing_roles = await role_names(db, row) if row else set()
+    if row and data.field_staff_category == "member" and "field_staff_category" in data.model_fields_set:
+        if await db.scalar(select(FieldProject.id).where(FieldProject.manager_id == row.id).limit(1)):
+            raise HTTPException(409, "已任命的项目组长不能归类为组员，请先调整项目组长")
     if row and row.id == user.id and (not data.is_active or data.role not in existing_roles):
         raise HTTPException(409, "不能停用自己或移除自己的管理权限")
     if row and row.is_superuser and not user.is_superuser:
@@ -740,13 +853,29 @@ async def save_person(db, user, data, item_id=None):
         row = Employee(status="在职", is_field_staff=True,
                        hashed_password=get_password_hash(data.password or DEFAULT_INITIAL_PASSWORD))
         db.add(row)
-    for key, value in data.model_dump(exclude={"password", "role", "wecom_userid", *RosterFields.model_fields}).items():
+    for key, value in data.model_dump(exclude={"password", "role", "wecom_userid", "field_staff_category", *RosterFields.model_fields}).items():
         setattr(row, key, value.strip() if isinstance(value, str) else value)
     row.employee_no = number
     if data.password:
         row.hashed_password = get_password_hash(data.password)
     await db.flush()
     await save_roster_fields(db, row, data.model_dump(include=set(RosterFields.model_fields), exclude_unset=True))
+    if "field_staff_category" in data.model_fields_set:
+        from app.models.field_service import FieldRosterProfile
+        if data.field_staff_category is not None and data.role == "employee":
+            # Explicitly classifying an existing company employee as field
+            # staff must also make them visible to aftersales managers.
+            row.is_field_staff = True
+        profile = await db.get(FieldRosterProfile, row.id)
+        details = dict(profile.details or {}) if profile else {}
+        if data.field_staff_category is None:
+            details.pop("field_staff_category", None)
+        else:
+            details["field_staff_category"] = data.field_staff_category
+        if profile:
+            profile.details = details
+        elif details:
+            db.add(FieldRosterProfile(employee_id=row.id, details=details))
     if not row.is_active:
         await stop_person(db, row.id)
     await bind_member(db, row.id, data.wecom_userid)
@@ -795,6 +924,8 @@ def audited(action, operation):
                 for key in RosterDetails.model_fields:
                     if key in values:
                         values[key] = (profile.details if profile else {}).get(key)
+                if "field_staff_category" in values:
+                    values["field_staff_category"] = (profile.details if profile else {}).get("field_staff_category")
                 from app.models.field_service import FieldWecomIdentity
                 values["role"] = sorted(await roles(db, row))
                 values["wecom_userid"] = await db.scalar(select(FieldWecomIdentity.userid).where(FieldWecomIdentity.employee_id == row.id))

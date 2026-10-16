@@ -27,6 +27,7 @@
           </div>
           <p v-if="errorMessage && !policy?.password_enabled" class="danger-text login-error">{{ errorMessage }}</p>
           <form v-if="policy?.password_enabled" class="login-form" @submit.prevent="handleLogin">
+            <p v-if="policy.local_passwordless_enabled" class="login-policy-note">本机开发模式：输入账号即可登录，无需密码。</p>
             <div class="login-form-list">
               <label class="login-field-card">
                 <span class="login-field-card__label">账号或手机号</span>
@@ -50,7 +51,7 @@
                   {{ account }}
                 </button>
               </div>
-              <label class="login-field-card">
+              <label v-if="!policy.local_passwordless_enabled" class="login-field-card">
                 <span class="login-field-card__label">密码</span>
                 <input
                   v-model="password"
@@ -86,7 +87,7 @@ import { loadLoginPolicy, startWecom, finishWecom, takeWecomCallback, consumeLog
  * 移动端登录页。
  *
  * 它比 Web 登录页更轻，只负责：
- * - 收集账号或手机号和密码
+ * - 收集账号或手机号；正式环境还需密码
  * - 调用移动端 auth store
  * - 登录成功后进入 `/app/tabs/home`
  *
@@ -150,7 +151,7 @@ async function handleLogin() {
   errorMessage.value = ''
   try {
     const normalizedAccount = phone.value.trim()
-    await auth.login(normalizedAccount, password.value, rememberAccount.value)
+    await auth.login(normalizedAccount, policy.value?.local_passwordless_enabled ? '' : password.value, rememberAccount.value)
     if (rememberAccount.value) {
       saveAccountHistory(normalizedAccount)
     } else {
@@ -158,7 +159,8 @@ async function handleLogin() {
     }
     await router.replace(consumeLoginDestination('mobile','/app/tabs/home'))
   } catch (error: any) {
-    errorMessage.value = error?.response?.data?.detail || '登录失败，请检查账号或手机号或密码'
+    errorMessage.value = error?.response?.data?.detail || (policy.value?.local_passwordless_enabled
+      ? '登录失败，请检查账号或手机号' : '登录失败，请检查账号或手机号或密码')
   }
 }
 

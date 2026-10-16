@@ -27,6 +27,8 @@ class RotationPublish(ReasonInput):
     end_date: date
     cycle_start: date
     edits: list[DayEdit] = Field(default_factory=list, max_length=366)
+    person_edits: list[PersonDayEdit] = Field(default_factory=list, max_length=1000)
+    member_days_only: bool = False
     reason: str = Field(default="周期排班", min_length=1, max_length=500)
 
     @model_validator(mode="after")
@@ -35,6 +37,11 @@ class RotationPublish(ReasonInput):
             raise ValueError("排班范围须为1至366天，周期起点不能晚于开始日期")
         if len({d.date for d in self.edits}) != len(self.edits) or any(not self.start_date <= d.date <= self.end_date for d in self.edits):
             raise ValueError("调整日期重复或不在排班范围内")
+        if len({(d.employee_id, d.date) for d in self.person_edits}) != len(self.person_edits):
+            raise ValueError("人员日期调整不可重复")
+        if any(d.employee_id not in self.employee_ids or not self.start_date <= d.date <= self.end_date
+               for d in self.person_edits):
+            raise ValueError("人员日期调整须属于所选人员和排班范围")
         return self
 
 

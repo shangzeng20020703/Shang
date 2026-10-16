@@ -94,6 +94,13 @@ async def main():
             assert len((await req("GET", "/directory"))["projects"]) == len(original["projects"])
             configured = await req("POST", configure_path, json={"manager_id": manager})
             pid = configured["id"]
+            # The appointed project leader is now automatically included in
+            # this project's participation roster. Use a separate field worker
+            # to keep the bulk-member and overlap checks independent of that.
+            bulk_peer = (await req("POST", "/people", json={
+                "name": "批量成员验收员", "phone": "19911118888",
+                "employee_no": "TG-MEMBER-QA", "role": "employee",
+            }))["id"]
             future = today() + timedelta(days=40)
             members_data = {"employee_ids": [staff], "start_date": str(future), "end_date": str(future)}
             await req("POST", f"/projects/{pid}/members", who="manager", status=403, json=members_data)
@@ -106,7 +113,7 @@ async def main():
             await req("POST", f"/projects/{pid}/members", who="manager", status=403,
                       json={**members_data, "employee_ids": [staff, admin]})
             assert len((await req("GET", "/directory"))["assignments"]) == count
-            await req("POST", f"/projects/{pid}/members", json={**members_data, "employee_ids": [staff, manager]})
+            await req("POST", f"/projects/{pid}/members", json={**members_data, "employee_ids": [staff, bulk_peer]})
             await req("POST", f"/projects/{pid}/members", status=409, json=members_data)
             await req("POST", f"/projects/{pid}/members", status=422, json={**members_data,"employee_ids":[staff,staff]})
             async def runtime(day):

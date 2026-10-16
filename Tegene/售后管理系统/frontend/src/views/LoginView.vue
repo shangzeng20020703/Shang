@@ -50,6 +50,7 @@
           :class="{ 'animate-in-delay': mounted }"
           @keyup.enter="handleLogin"
         >
+          <p v-if="policy.local_passwordless_enabled" class="login-policy-note">本机开发模式：输入账号即可登录，无需密码。</p>
           <el-form-item prop="phone">
             <div class="custom-input-wrapper">
               <span class="input-prefix">账号</span>
@@ -63,7 +64,7 @@
             </div>
           </el-form-item>
 
-          <el-form-item prop="password">
+          <el-form-item v-if="!policy.local_passwordless_enabled" prop="password">
             <el-input
               v-model="loginForm.password"
               :type="showPassword ? 'text' : 'password'"
@@ -88,7 +89,7 @@
 
           <div class="form-options">
             <el-checkbox v-model="rememberMe" label="记住账号" />
-            <a href="javascript:void(0)" class="forgot-link" @click="ElMessage.info('请联系管理员重置密码')">忘记密码?</a>
+            <a v-if="!policy.local_passwordless_enabled" href="javascript:void(0)" class="forgot-link" @click="ElMessage.info('请联系管理员重置密码')">忘记密码?</a>
           </div>
 
           <el-form-item class="login-btn-item">
@@ -114,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Lock, View, Hide } from '@element-plus/icons-vue'
@@ -127,7 +128,7 @@ import { loadLoginPolicy, startWecom, finishWecom, takeWecomCallback, consumeLog
  * Web 登录页。
  *
  * 这里做的事情很纯粹：
- * - 采集账号和密码
+ * - 采集账号；正式环境还需采集密码
  * - 调用 user store 登录
  * - 登录成功后按角色跳到默认首页
  *
@@ -153,14 +154,12 @@ const loginForm = reactive({
   password: '',
 })
 
-const rules: FormRules = {
-  phone: [
-    { required: true, message: '请输入账号或手机号', trigger: 'blur' },
-  ],
-  password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-  ],
-}
+const rules = computed<FormRules>(() => ({
+  phone: [{ required: true, message: '请输入账号或手机号', trigger: 'blur' }],
+  ...(policy.value?.local_passwordless_enabled ? {} : {
+    password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+  }),
+}))
 
 onMounted(async () => {
   try {
@@ -212,7 +211,7 @@ async function handleLogin() {
 
   loading.value = true
   try {
-    await userStore.login(loginForm.phone, loginForm.password)
+    await userStore.login(loginForm.phone, policy.value?.local_passwordless_enabled ? '' : loginForm.password)
     if (!canEnterManagement()) {
       userStore.logout()
       ElMessage.warning('当前账号未开通管理端权限，请使用员工端入口')
@@ -227,7 +226,7 @@ async function handleLogin() {
     const status = Number(error?.response?.status || 0)
     const detail = error?.response?.data?.detail
     const msg =
-      status === 401 || status === 403 ? (detail || '登录失败，请检查账号和密码')
+      status === 401 || status === 403 ? (detail || (policy.value?.local_passwordless_enabled ? '登录失败，请检查账号' : '登录失败，请检查账号和密码'))
         : status >= 500 ? '登录服务暂时不可用，请稍后重试'
           : !error?.response ? '无法连接服务器，请检查网络或后端服务'
             : (detail || '登录失败，请稍后重试')

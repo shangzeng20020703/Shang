@@ -7,20 +7,19 @@
     <label v-if="canViewProjectClaims" class="service-row"><span>查看项目排班与申请</span><input type="checkbox" v-model="manageView" @change="load"/></label>
     <section v-if="canPunch || manageView" class="service-card"><h2>待休余额</h2><p v-for="b in data.balances" :key="b.employee_id">{{b.employee_name || '本人'}}：<strong>{{b.days}}天</strong></p><p v-if="!data.balances.length">0天</p></section>
     <section v-if="canPunch" class="service-card"><h2>个人排班日历</h2><p class="muted">未发布日期为待确认，打卡仍可留存。半天调休当天工时减半。</p><div class="calendar-grid"><span v-for="w in ['一','二','三','四','五','六','日']" :key="w" class="weekday">{{w}}</span><span v-for="i in monthOffset" :key="`blank-${i}`"></span><div v-for="d in calendarDays" :key="d.date" :class="['day',d.kind,{today:d.date===today}]"><b>{{Number(d.date.slice(-2))}}</b><small>{{d.label}}</small><small v-if="d.shift_label">{{shiftLabel(d.shift_label)}}</small><small v-if="d.required_hours">{{d.required_hours}}h</small></div></div></section>
-    <section v-if="manageView" class="service-card"><h2>项目排班</h2><p class="muted">区域组长可查看所有项目；只有受分配项目可设置排班。发布后的调班须逐级审核。</p><article v-for="d in data.days" :key="`${d.employee_id}-${d.date}-${d.project_id}`" class="claim"><strong>{{d.employee_name}} · {{d.date}}</strong><p>{{projectName(d.project_id)}} · {{d.label || labels[d.kind]}}<span v-if="d.shift_label"> · {{shiftLabel(d.shift_label)}}</span> · 应出勤 {{d.required_hours || 0}} 小时</p><button v-if="canScheduleProject(d.project_id)" @click="openAdjustment(d)">申请调整</button></article><p v-if="!data.days.length" class="muted">该月份暂无已发布排班</p></section>
+    <section v-if="manageView" class="service-card"><h2>项目每周排班</h2><p class="muted">按北京时间周一至周日查看。区域组长可查看全部项目；只有受分配项目可设置排班。发布后的调班须逐级审核。</p><div class="service-row week-nav"><button @click="moveWeek(-1)">上周</button><strong>{{weekStart}} — {{weekEnd}}</strong><button @click="moveWeek(1)">下周</button><button @click="goThisWeek">本周</button></div><article v-for="d in weekData.days" :key="`${d.employee_id}-${d.date}-${d.project_id}`" class="claim"><strong>{{d.employee_name}} · {{d.date}}</strong><p>{{projectName(d.project_id)}} · {{d.label || labels[d.kind]}}<span v-if="d.shift_label"> · {{shiftLabel(d.shift_label)}}</span> · 应出勤 {{d.required_hours || 0}} 小时</p><button v-if="canScheduleProject(d.project_id)" @click="openAdjustment(d)">申请调整</button></article><p v-if="!weekData.days.length" class="muted">该周暂无已发布排班，可查看以往各周。</p></section>
     <section v-if="manageView && projectId && canScheduleProject(projectId)" class="service-card">
-      <h2>生成六上休一排班</h2>
-      <p class="muted">个人周期跨项目延续。预览后可调整日期，再发布初次排班；已发布的日期请提交调班申请。</p>
+      <h2>生成本周六上休一排班</h2>
+      <p class="muted">{{weekStart}} — {{weekEnd}}；默认选择本项目组员和组长。个人周期跨项目延续，逐人逐日调整后确认发布，已发布的日期请提交调班申请。</p>
       <p v-if="!rotationRule" class="service-error">请先为项目配置现场轮休考勤规则。</p>
       <div class="service-field"><span>参与人员</span><div class="plan-people"><label v-for="person in schedulableMembers" :key="person.id"><input v-model="plan.employee_ids" type="checkbox" :value="person.id" @change="invalidatePreview"/>{{person.name}}</label></div><small v-if="!schedulableMembers.length" class="muted">请先为项目添加参与人员。</small></div>
       <label class="service-field">周期起点<input v-model="plan.cycle_start" type="date" @change="invalidatePreview"/></label>
-      <label class="service-field">开始日期<input v-model="plan.start_date" type="date" @change="invalidatePreview"/></label>
-      <label class="service-field">结束日期<input v-model="plan.end_date" type="date" @change="invalidatePreview"/></label>
+      <p class="muted">本次安排日期：{{plan.start_date}} — {{plan.end_date}}。当前周只发布今天起的日期，过去各周仅供查看。</p>
       <label class="service-field">发布原因<textarea v-model="plan.reason" maxlength="500" @input="invalidatePreview"></textarea></label>
-      <button class="service-primary" :disabled="saving || !rotationRule || !plan.employee_ids.length" @click="previewPlan">预览排班</button>
+      <button class="service-primary" :disabled="saving || isPastWeek || !rotationRule || !plan.employee_ids.length" @click="previewPlan">预览本周排班</button>
       <template v-if="previewData.revision">
-        <p>已预览 {{previewData.rows.length}} 条安排。修改同一日期会应用到本次所选人员。</p>
-        <div class="plan-preview"><div v-for="row in previewData.rows" :key="`${row.employee_id}-${row.date}`" class="plan-row"><span>{{personName(row.employee_id)}} · {{row.date}}<br/><small>周期起点 {{row.cycle_start}} · 原定{{labels[row.original_kind]}}</small></span><div><select :value="row.kind" @change="editPlanDay(row.date,($event.target as HTMLSelectElement).value)"><option value="work">上班</option><option value="rest">正常轮休</option></select><select :value="row.shift_label || ''" :disabled="row.kind!=='work'" aria-label="班别（仅展示）" @change="editPlanShift(row.date,($event.target as HTMLSelectElement).value)"><option value="">未指定</option><option value="day">白班</option><option value="night">夜班</option></select></div></div></div>
+        <p>已预览 {{previewData.rows.length}} 条个人安排。可逐人逐日调整，发布后将给排班人员发送站内消息。</p>
+        <div class="plan-preview"><div v-for="row in previewData.rows" :key="`${row.employee_id}-${row.date}`" class="plan-row"><span>{{personName(row.employee_id)}} · {{row.date}}<br/><small>周期起点 {{row.cycle_start}} · 原定{{labels[row.original_kind]}}</small></span><div><select :value="row.kind" :aria-label="`${personName(row.employee_id)} ${row.date} 安排`" @change="editPlanDay(row.employee_id,row.date,($event.target as HTMLSelectElement).value)"><option value="work">上班</option><option value="rest">正常轮休</option></select><select :value="row.shift_label || ''" :disabled="row.kind!=='work'" :aria-label="`${personName(row.employee_id)} ${row.date} 班别`" @change="editPlanShift(row.employee_id,row.date,($event.target as HTMLSelectElement).value)"><option value="">未指定</option><option value="day">白班</option><option value="night">夜班</option></select></div></div></div>
         <button class="service-primary" :disabled="saving" @click="publishPlan">确认发布 {{previewData.rows.length}} 条</button>
       </template>
     </section>
@@ -43,15 +42,17 @@ import {IonPage,IonContent,onIonViewWillEnter,alertController} from '@ionic/vue'
 import {get,post} from '@/utils/request'
 import {useAuthStore} from '@/stores/auth'
 import {useRoute} from 'vue-router'
-const auth=useAuthStore(),directory=ref<any>({projects:[],managed_project_ids:[],can_manage:false}),data=ref<any>({days:[],claims:[],balances:[],ledger:[]}),error=ref(''),saving=ref(false)
+const auth=useAuthStore(),directory=ref<any>({projects:[],managed_project_ids:[],can_manage:false}),data=ref<any>({days:[],claims:[],balances:[],ledger:[]}),weekData=ref<any>({days:[]}),error=ref(''),saving=ref(false)
 const route=useRoute()
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()),month=ref(today.slice(0,7)),projectId=ref(0),manageView=ref(false)
 const canPunch=computed(()=>!auth.roles.includes('regional_lead')&&!auth.roles.includes('aftersales_manager'))
 const canManage=computed(()=>projectId.value>0&&(directory.value.projects.find((p:any)=>p.id===projectId.value)?.can_schedule??(directory.value.can_manage||directory.value.schedule_project_ids?.includes(projectId.value))))
 const canViewProjectClaims=computed(()=>auth.roles.includes('aftersales_manager')||auth.roles.includes('regional_lead')||auth.roles.includes('admin')||canManage.value)
 function canScheduleProject(id:number){return !!(directory.value.projects.find((p:any)=>p.id===id)?.can_schedule??(directory.value.can_manage||directory.value.schedule_project_ids?.includes(id)))}
-const rotationRule=computed(()=>directory.value.rules?.find((r:any)=>r.id===directory.value.projects.find((p:any)=>p.id===projectId.value)?.rule_id)?.rule_type==='rotation')
-const schedulableMembers=computed<any[]>(()=>{const ids=new Set(directory.value.assignments?.filter((a:any)=>a.project_id===projectId.value && (a.is_current || a.status==='active')).map((a:any)=>a.employee_id) || []);return (directory.value.people || []).filter((p:any)=>ids.has(p.id))})
+const selectedRule=computed(()=>directory.value.rules?.find((r:any)=>r.id===directory.value.projects.find((p:any)=>p.id===projectId.value)?.rule_id))
+const rotationRule=computed(()=>selectedRule.value?.rule_type==='rotation')
+const publishStart=computed(()=>{const dates=[today,weekStart.value,String(selectedRule.value?.effective_date||'')].sort();return dates[dates.length-1]||today})
+const schedulableMembers=computed<any[]>(()=>{const ids=new Set(directory.value.assignments?.filter((a:any)=>a.project_id===projectId.value && (a.is_current || a.status==='active') && (!a.start_date || a.start_date<=weekEnd.value) && (!a.end_date || a.end_date>=publishStart.value)).map((a:any)=>a.employee_id) || []);return (directory.value.people || []).filter((p:any)=>ids.has(p.id))})
 function personName(id:number){return directory.value.people?.find((p:any)=>p.id===id)?.name || `人员${id}`}
 const labels:any={work:'上班',rest:'轮休',leave:'调休',half_leave:'半天调休',pending:'待确认'},claimLabels:any={schedule:'调班',credit:'出勤确认',leave:'调休'},statusLabels:any={pending:'待审批',approved:'已批准',rejected:'已驳回',revoked:'已撤销'}
 function shiftLabel(value:string){return value==='day'?'白班':value==='night'?'夜班':''}
@@ -59,20 +60,26 @@ function projectName(id:number){return directory.value.projects.find((p:any)=>p.
 function approvalRoleLabel(role:string){return ({project_leader:'项目组长',regional_lead:'区域组长',aftersales_manager:'售后经理',admin:'系统管理员'} as Record<string,string>)[role]||role}
 function stepStatusLabel(status:string){return ({pending:'待处理',approved:'已通过',rejected:'已驳回',skipped:'已跳过'} as Record<string,string>)[status]||status}
 function addDays(day:string,n:number){const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)}
+function monday(day:string){return addDays(day,-((new Date(day+'T12:00:00Z').getUTCDay()+6)%7))}
+const weekStart=ref(monday(today)),weekEnd=computed(()=>addDays(weekStart.value,6)),isPastWeek=computed(()=>publishStart.value>weekEnd.value)
 const start=computed(()=>month.value+'-01'),end=computed(()=>{const d=new Date(start.value+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);return d.toISOString().slice(0,10)})
 const monthOffset=computed(()=>(new Date(start.value+'T12:00:00Z').getUTCDay()+6)%7)
 const calendarDays=computed(()=>{const rows=[];for(let d=start.value;d<=end.value;d=addDays(d,1)){const row=data.value.days.find((r:any)=>r.employee_id===auth.user?.id&&r.date===d);rows.push(row||{date:d,kind:'pending',label:labels.pending})}return rows})
 const loadedView=ref(false)
-async function load(){try{directory.value=await get('/field/directory');if(!loadedView.value){manageView.value=canViewProjectClaims.value && (!canPunch.value || projectId.value>0);loadedView.value=true}else if(!canViewProjectClaims.value)manageView.value=false;data.value=await get('/rotation/calendar',{start:start.value,end:end.value,project_id:projectId.value||undefined,employee_id:manageView.value?undefined:auth.user?.id})}catch(e){error.value=message(e)}}
-function projectChanged(){plan.value.employee_ids=[];plan.value.edits=[];invalidatePreview();void load()}
+const selectionProjectId=ref(0)
+async function load(){try{directory.value=await get('/field/directory');if(!loadedView.value){manageView.value=canViewProjectClaims.value && (!canPunch.value || projectId.value>0);loadedView.value=true}else if(!canViewProjectClaims.value)manageView.value=false;data.value=await get('/rotation/calendar',{start:start.value,end:end.value,project_id:projectId.value||undefined,employee_id:manageView.value?undefined:auth.user?.id});if(manageView.value){weekData.value=await get('/rotation/calendar',{start:weekStart.value,end:weekEnd.value,project_id:projectId.value||undefined});if(projectId.value>0 && selectionProjectId.value!==projectId.value){syncPlanWeek();plan.value.cycle_start=publishStart.value;plan.value.employee_ids=schedulableMembers.value.map((p:any)=>p.id);selectionProjectId.value=projectId.value}}}catch(e){error.value=message(e)}}
+function syncPlanWeek(){plan.value.start_date=publishStart.value;plan.value.end_date=weekEnd.value;plan.value.person_edits=[];invalidatePreview()}
+function moveWeek(step:number){weekStart.value=addDays(weekStart.value,step*7);syncPlanWeek();void load()}
+function goThisWeek(){weekStart.value=monday(today);syncPlanWeek();void load()}
+function projectChanged(){selectionProjectId.value=0;plan.value.employee_ids=[];syncPlanWeek();void load()}
 function message(e:any){return typeof e.response?.data?.detail==='string'?e.response.data.detail:'操作失败，请核对日期和原因'}
-const plan=ref({employee_ids:[] as number[],cycle_start:today,start_date:today,end_date:addDays(today,13),reason:'周期排班',edits:[] as {date:string,kind:string,shift_label?:string|null}[]})
+const plan=ref({employee_ids:[] as number[],cycle_start:today,start_date:today,end_date:addDays(monday(today),6),reason:'周期排班',person_edits:[] as {employee_id:number,date:string,kind:string,shift_label?:string|null}[]})
 const previewData=ref<any>({rows:[],revision:''})
 function invalidatePreview(){previewData.value={rows:[],revision:''}}
-function planBody(){return {...plan.value}}
+function planBody(){return {...plan.value,member_days_only:true}}
 async function previewPlan(){if(!plan.value.reason.trim()){error.value='请填写发布原因';return}if(plan.value.cycle_start>plan.value.start_date || plan.value.start_date>plan.value.end_date){error.value='请核对周期起点和排班日期';return}saving.value=true;error.value='';try{previewData.value=await post(`/rotation/projects/${projectId.value}/preview`,planBody())}catch(e){invalidatePreview();error.value=message(e)}finally{saving.value=false}}
-async function editPlanDay(date:string,kind:string){const existing=plan.value.edits.find(e=>e.date===date);const row=previewData.value.rows.find((item:any)=>item.date===date);plan.value.edits=[...plan.value.edits.filter(e=>e.date!==date),{date,kind,shift_label:kind==='work'?(existing?.shift_label ?? row?.shift_label ?? null):null}];invalidatePreview();await previewPlan()}
-async function editPlanShift(date:string,value:string){const existing=plan.value.edits.find(e=>e.date===date);const row=previewData.value.rows.find((item:any)=>item.date===date);plan.value.edits=[...plan.value.edits.filter(e=>e.date!==date),{date,kind:existing?.kind || row?.kind || 'work',shift_label:value||null}];invalidatePreview();await previewPlan()}
+async function editPlanDay(employeeId:number,date:string,kind:string){const existing=plan.value.person_edits.find(e=>e.employee_id===employeeId&&e.date===date);const row=previewData.value.rows.find((item:any)=>item.employee_id===employeeId&&item.date===date);plan.value.person_edits=[...plan.value.person_edits.filter(e=>e.employee_id!==employeeId||e.date!==date),{employee_id:employeeId,date,kind,shift_label:kind==='work'?(existing?.shift_label ?? row?.shift_label ?? null):null}];invalidatePreview();await previewPlan()}
+async function editPlanShift(employeeId:number,date:string,value:string){const existing=plan.value.person_edits.find(e=>e.employee_id===employeeId&&e.date===date);const row=previewData.value.rows.find((item:any)=>item.employee_id===employeeId&&item.date===date);plan.value.person_edits=[...plan.value.person_edits.filter(e=>e.employee_id!==employeeId||e.date!==date),{employee_id:employeeId,date,kind:existing?.kind || row?.kind || 'work',shift_label:value||null}];invalidatePreview();await previewPlan()}
 async function publishPlan(){const dialog=await alertController.create({header:'确认发布排班',message:`将发布 ${previewData.value.rows.length} 条个人排班。已发布日期后续须提交调班申请。`,buttons:[{text:'返回',role:'cancel'},{text:'确认发布',handler:()=>{void doPublishPlan()}}]});await dialog.present()}
 async function doPublishPlan(){saving.value=true;error.value='';try{await post(`/rotation/projects/${projectId.value}/publish?revision=${encodeURIComponent(previewData.value.revision)}`,planBody());invalidatePreview();await load()}catch(e){error.value=message(e)}finally{saving.value=false}}
 const adjustRow=ref<any>(null),adjustKind=ref('work'),adjustShiftLabel=ref(''),adjustReason=ref('')
@@ -88,4 +95,5 @@ onIonViewWillEnter(()=>{const id=Number(route.query.project_id||0);if(id>0)proje
 <style scoped>
 .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}.day{border-radius:8px;min-height:69px;background:#f3f5f8;padding:6px 2px;text-align:center}.day small{display:block;font-size:10px;line-height:1.5}.work{background:#eaf5ff}.rest{background:#e7f5ee}.leave,.half_leave{background:#fff0d9}.today{outline:2px solid #397acf}.weekday{text-align:center;color:#63748a}.claim{padding:16px 0;border-bottom:1px solid #e5eaf0}.review{border:2px solid #397acf}.rotation-mobile h2{font-size:18px}
 .plan-people{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.plan-people label{display:inline-flex;gap:5px;align-items:center;padding:8px 10px;border:1px solid #dce4ee;border-radius:8px}.plan-preview{max-height:320px;overflow:auto;border-top:1px solid #e5eaf0;margin:14px 0}.plan-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #e5eaf0}.plan-row small{color:#718096}.plan-row select{width:112px;flex:none}
+.week-nav{flex-wrap:wrap;gap:8px;margin:14px 0}.week-nav button{border:1px solid #dce4ee;background:white;border-radius:8px;padding:8px 10px}
 </style>

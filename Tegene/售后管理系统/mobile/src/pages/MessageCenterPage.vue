@@ -298,6 +298,8 @@ async function openNotification(item: any) {
       path: `/app/approval/${item.ref_id}`,
       query: { mode: isApprovalTodo ? 'pending' : 'submitted' },
     })
+  } else if (String(item.ref_type || '').toLowerCase() === 'rotation_schedule' && item.ref_id) {
+    router.push({ path: '/app/rotation', query: { project_id: String(item.ref_id) } })
   }
 }
 

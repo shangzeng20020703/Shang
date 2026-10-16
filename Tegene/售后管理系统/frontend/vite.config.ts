@@ -13,11 +13,11 @@ export default defineConfig({
     port: 5186,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8186',
+        target: process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8186',
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://127.0.0.1:8186',
+        target: process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8186',
         changeOrigin: true,
       },
     },

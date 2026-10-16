@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 from pydantic import BaseModel, Field, model_validator, field_validator
 from app.schemas.field_roster import RosterFields
 
@@ -14,7 +15,7 @@ class ProjectInput(BaseModel):
     code: str = Field(min_length=1, max_length=50)
     name: str = Field(min_length=1, max_length=150)
     customer_id: int = Field(gt=0)
-    manager_id: int = Field(gt=0)
+    manager_id: int | None = Field(default=None, gt=0)
     description: str = Field(default="", max_length=2000)
     is_active: bool = True
 
@@ -102,6 +103,8 @@ class PersonInput(RosterFields):
     password: str | None = Field(default=None, min_length=8, max_length=72)
     wecom_userid: str | None = Field(default=None, max_length=128)
     role: str = Field(default="employee", pattern="^(employee|manager|hr|admin|regional_lead|aftersales_manager)$")
+    # A personnel category for project selectors, not a permission grant.
+    field_staff_category: Literal["member", "leader_candidate"] | None = None
 
     @field_validator("status", mode="before")
     @classmethod

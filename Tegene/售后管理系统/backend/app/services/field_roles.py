@@ -115,7 +115,12 @@ async def can_view_project(db, user, project_id):
     names = await role_names(db, user)
     if names & {"admin", "hr", "aftersales_manager", "regional_lead"}:
         return True
-    return await role_in_project(db, user, project_id) in {"project_leader", "member"}
+    if await role_in_project(db, user, project_id) in {"project_leader", "member"}:
+        return True
+    from app.models.field_service import FieldProjectPendingMember
+    return bool(await db.scalar(select(FieldProjectPendingMember.id).where(
+        FieldProjectPendingMember.project_id == project_id,
+        FieldProjectPendingMember.employee_id == user.id).limit(1)))
 
 
 async def require_project_read(db, user, project_id):

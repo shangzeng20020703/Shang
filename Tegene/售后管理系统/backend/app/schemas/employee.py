@@ -53,7 +53,7 @@ class LoginRequest(BaseModel):
     注意: 接口接受 JSON 格式，不是 OAuth2 form-urlencoded
     """
     phone: str = Field(..., description="登录手机号")
-    password: str = Field(..., description="密码")
+    password: str = Field("", description="密码；仅本机开发演示启用时可省略")
     remember_me: bool = Field(False, description="是否保持登录；true 时签发较长有效期 Token")
 
 

@@ -9,7 +9,7 @@
       </div>
     </header>
     <el-radio-group v-model="rosterGroup" class="roster-groups" aria-label="名册分类">
-      <el-radio-button value="employee">组员</el-radio-button>
+      <el-radio-button value="employee">现场员工</el-radio-button>
       <el-radio-button value="management">现场管理与管理员</el-radio-button>
     </el-radio-group>
     <section class="people-controls" aria-label="人员筛选">
@@ -34,7 +34,7 @@
           <thead><tr><th scope="col">姓名</th><th v-if="rosterGroup==='management'" scope="col">系统权限</th><th scope="col">公司在职状态</th><th scope="col">联系电话</th><th scope="col">所属部门 / 公司</th><th scope="col">当前所在项目</th><th scope="col">账号状态</th><th scope="col" class="row-action">操作</th></tr></thead>
           <tbody>
             <tr v-for="person in pagedPeople" :key="person.id" :class="{departed:person.status==='离职'}">
-              <td><strong class="person-name">{{ person.name }}</strong></td>
+              <td><strong class="person-name">{{ person.name }}</strong><span v-if="person.role==='employee' && person.field_staff_category==='leader_candidate' && person.field_role!=='project_leader'" class="candidate-note">项目组长候选</span></td>
               <td v-if="rosterGroup==='management'">{{ person.field_role==='project_leader' ? `${roles[person.role] || person.role} · 项目组长` : (roles[person.role] || person.role) }}</td>
               <td><span class="employment-status" :class="statusClass(person.status)">{{ statusLabel(person.status) }}</span></td>
               <td class="phone-cell">{{ person.phone }}</td>
@@ -67,6 +67,7 @@
         <el-form-item label="工号"><el-input v-model="form.employee_no" /></el-form-item>
         <el-form-item label="直属主管"><el-select placeholder="" v-model="form.direct_manager_id" clearable filterable><el-option v-for="p in people.filter(x=>x.id!==form.id&&x.is_active)" :key="p.id" :value="p.id" :label="p.name" /></el-select></el-form-item>
         <el-form-item label="系统权限"><el-select placeholder="" v-model="form.role"><el-option v-for="(label,key) in permissionOptions" :key="key" :value="key" :label="label" /></el-select><small class="role-help">项目组长在项目库任命；售后经理由系统管理员任命，区域组长由售后经理或系统管理员任命。</small></el-form-item>
+        <el-form-item v-if="form.role==='employee'" label="现场职能"><el-select v-model="form.field_staff_category" placeholder="选择现场职能"><el-option label="组员" value="member" /><el-option label="项目组长候选" value="leader_candidate" /></el-select><small class="role-help">候选身份只影响项目组长选择名单；被项目任命后才获得对应项目的组长权限。</small></el-form-item>
         <el-form-item :label="form.id?'重设密码':'初始密码'"><el-input v-model="form.password" type="password" show-password autocomplete="new-password" /></el-form-item>
         <el-form-item label="企微成员账号（userid）"><el-input v-model="form.wecom_userid" /></el-form-item>
         <el-form-item v-if="form.id" label="启用账号"><el-switch v-model="form.is_active" :disabled="form.status==='离职'" /></el-form-item>
@@ -163,8 +164,8 @@ watch(()=>filtered.value.length,total=>{page.value=Math.min(page.value,Math.max(
 const importVisible=ref(false), importBusy=ref(false), importDone=ref(false), importFile=ref<File|null>(null), report=ref<any>(null), importError=ref('')
 function message(e:any, fallback:string) { return typeof e.response?.data?.detail==='string'?e.response.data.detail:fallback }
 async function load(){loading.value=true;try{const [p,d,c,j]=await Promise.all([get('/field/people'),get('/departments'),get('/field/roster/columns'),get<any[]>('/field/positions')]);people.value=p;departments.value=Array.isArray(d)?d:(d.items||[]);columns.value=c;positions.value=j}catch(e:any){ElMessage.error(message(e,'人员资料加载失败'))}finally{loading.value=false}}
-async function edit(row?:any){error.value='';form.value=row?{...row,password:''}:{name:'',employee_no:'',phone:'',position:'',role:'employee',status:'在职',is_active:true,password:'',wecom_userid:'',age:null,days_employed:null};if(!form.value.department_id&&form.value.department_name){const matches=departments.value.filter(d=>d.name===form.value.department_name);if(matches.length===1)form.value.department_id=matches[0].id}if(!form.value.department_id){const available=departments.value.filter(d=>d.is_active!==false);if(available.length===1){form.value.department_id=available[0].id;form.value.department_name=available[0].name}}visible.value=true;try{positions.value=await get<any[]>('/field/positions')}catch(e){ElMessage.error('岗位列表加载失败，请刷新后重试')}}
-async function save(){if(saving.value)return;error.value='';if(!form.value.name?.trim()||!form.value.phone?.trim()){error.value='请填写姓名和联系电话';return}if(!form.value.id&&!/^1[3-9]\d{9}$/.test(form.value.phone.trim())){error.value='请输入 11 位有效手机号';return}saving.value=true;try{const data={...form.value,name:form.value.name.trim(),phone:form.value.phone.trim(),password:form.value.password||null};data.id?await put('/field/people/'+data.id,data):await post('/field/people',data);ElMessage.success(data.status==='离职'?'已保存，离职账号已锁定':data.id?'资料已更新':'人员已录入，手机号账号已开通');visible.value=false;await load()}catch(e:any){error.value=message(e,'请检查资料格式；如设置密码，至少 8 位')}finally{saving.value=false}}
+async function edit(row?:any){error.value='';form.value=row?{...row,field_staff_category:row.field_staff_category || (row.field_role==='project_leader'?'leader_candidate':'member'),password:''}:{name:'',employee_no:'',phone:'',position:'',role:'employee',field_staff_category:'member',status:'在职',is_active:true,password:'',wecom_userid:'',age:null,days_employed:null};if(!form.value.department_id&&form.value.department_name){const matches=departments.value.filter(d=>d.name===form.value.department_name);if(matches.length===1)form.value.department_id=matches[0].id}if(!form.value.department_id){const available=departments.value.filter(d=>d.is_active!==false);if(available.length===1){form.value.department_id=available[0].id;form.value.department_name=available[0].name}}visible.value=true;try{positions.value=await get<any[]>('/field/positions')}catch(e){ElMessage.error('岗位列表加载失败，请刷新后重试')}}
+async function save(){if(saving.value)return;error.value='';if(!form.value.name?.trim()||!form.value.phone?.trim()){error.value='请填写姓名和联系电话';return}if(!form.value.id&&!/^1[3-9]\d{9}$/.test(form.value.phone.trim())){error.value='请输入 11 位有效手机号';return}saving.value=true;try{const data={...form.value,name:form.value.name.trim(),phone:form.value.phone.trim(),password:form.value.password||null,field_staff_category:form.value.role==='employee'?(form.value.field_staff_category||'member'):null};data.id?await put('/field/people/'+data.id,data):await post('/field/people',data);ElMessage.success(data.status==='离职'?'已保存，离职账号已锁定':data.id?'资料已更新':'人员已录入，手机号账号已开通');visible.value=false;await load()}catch(e:any){error.value=message(e,'请检查资料格式；如设置密码，至少 8 位')}finally{saving.value=false}}
 function openImport(){importVisible.value=true;importFile.value=null;report.value=null;importError.value='';importDone.value=false}
 function selectFile(event:Event){importFile.value=(event.target as HTMLInputElement).files?.[0]||null;report.value=null;importDone.value=false;importError.value=''}
 async function downloadTemplate(){try{const blob=await get<Blob>('/field/roster/template',undefined,{responseType:'blob'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='售后名册模板.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch{ElMessage.error('模板下载失败，请稍后重试')}}
@@ -178,6 +179,7 @@ onMounted(load)
 .people-header { display:flex; justify-content:space-between; align-items:center; gap:24px; margin: 0 0 20px; }
 .people-header h1 { display:flex; align-items:center; gap:12px; font-size:25px; letter-spacing:-.5px; margin:0 0 8px; color:#252b45; }
 .people-header h1 span { font-size:14px; font-weight:500; letter-spacing:0; background:#eceafa; color:#6555cf; border-radius:9px; padding:4px 10px; }
+.candidate-note { display:block; margin-top:3px; color:#7665b3; font-size:11px; }
 .header-actions { display:flex; gap:10px; flex-wrap:wrap; }
 .header-actions .el-button { margin:0; border-radius:9px; height:38px; }
 .roster-groups { margin-bottom:20px; }

@@ -12,7 +12,8 @@ from urllib.parse import parse_qs, urlparse
 
 sandbox = tempfile.TemporaryDirectory(prefix="aftersales-auth-")
 os.environ.update(DATABASE_URL_OVERRIDE="sqlite+aiosqlite:///" + sandbox.name + "/test.db",
-                  BACKGROUND_JOBS="false", LOGIN_MODE="password", ENVIRONMENT="development")
+                  BACKGROUND_JOBS="false", LOGIN_MODE="password", ENVIRONMENT="development",
+                  LOCAL_PASSWORDLESS_LOGIN="false")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select, update, delete
@@ -60,6 +61,37 @@ async def main():
         assert (await req("GET", "/auth/policy"))["password_enabled"]
         await req("POST", "/auth/wecom/start", status=503, json={"client":"web","environment":"web","challenge":"a"*64})
         passed.append("local password policy and unconfigured WeCom fail closed")
+        await req("POST", "/auth/login", status=401, json={"phone": "19900000001"})
+        assert not (await req("GET", "/auth/policy"))["local_passwordless_enabled"]
+        settings.LOCAL_PASSWORDLESS_LOGIN = True
+        try:
+            assert (await req("GET", "/auth/policy"))["local_passwordless_enabled"]
+            local_admin = (await req("POST", "/auth/management-login", json={"phone": "19900000001"}))["access_token"]
+            await req("GET", "/auth/management-session", local_admin)
+            local_staff = (await req("POST", "/auth/login", json={"phone": "19900000003"}))["access_token"]
+            await req("GET", "/auth/me", local_staff)
+            await req("POST", "/auth/management-login", status=403, json={"phone": "19900000003"})
+            await req("POST", "/auth/login", status=401, json={"phone": "19900000999"})
+            async with async_session() as db:
+                disabled = await db.scalar(select(Employee).where(Employee.phone == "19900000003"))
+                disabled.is_active = False
+                await db.commit()
+            await req("POST", "/auth/login", status=403, json={"phone": "19900000003"})
+            async with async_session() as db:
+                disabled = await db.scalar(select(Employee).where(Employee.phone == "19900000003"))
+                disabled.is_active = True
+                await db.commit()
+            async with AsyncClient(transport=ASGITransport(app=app, client=("192.0.2.10", 12345)), base_url="http://test") as remote:
+                remote_policy = await remote.get("/api/v1/auth/policy")
+                assert not remote_policy.json()["local_passwordless_enabled"]
+                remote_login = await remote.post("/api/v1/auth/login", json={"phone": "19900000001"})
+                assert remote_login.status_code == 401, remote_login.text
+                remote_session = await remote.get("/api/v1/auth/me", headers={"Authorization": "Bearer " + local_admin})
+                assert remote_session.status_code == 401, remote_session.text
+            passed.append("local-only passwordless web/mobile login respects roles, disabled accounts and loopback boundary")
+        finally:
+            settings.LOCAL_PASSWORDLESS_LOGIN = False
+        await req("GET", "/auth/me", local_admin, status=401)
         files = {"file": ("roster.csv", "姓名,手机号,工号,岗位,在职状态,企微账号\n测试工程师,13800000001,,售后工程师,在职,\n重复,13800000001,,,,\n错误,not-phone,,,,\n离职人员,13800000002,,,离职,\n".encode())}
         await req("POST", "/field/roster/import", staff, status=403, files=files)
         await req("GET", "/field/roster/template", staff, status=403)
@@ -251,6 +283,16 @@ async def main():
             passed.append("rebinding revokes WeCom sessions immediately")
         configured = Settings(_env_file=None,ENVIRONMENT="production",SECRET_KEY="x"*40,LOGIN_MODE="password")
         assert configured.LOGIN_MODE == "password"
+        for unsafe_settings in (
+            {"ENVIRONMENT": "production", "DATABASE_URL_OVERRIDE": None},
+            {"ENVIRONMENT": "development", "DATABASE_BACKEND": "mysql", "DATABASE_URL_OVERRIDE": None},
+        ):
+            try:
+                Settings(_env_file=None, SECRET_KEY="x" * 40, LOCAL_PASSWORDLESS_LOGIN=True, **unsafe_settings)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("passwordless login must reject production or MySQL")
         passed.append("production supports the roster phone/password mode with an explicit signing secret")
     await engine.dispose()
     print(f"PASS {len(passed)} auth/roster acceptance groups (WeCom provider mocked)")

@@ -2,6 +2,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.limiter import limiter
 from app.services import wecom_auth as service
 
@@ -22,8 +23,13 @@ class CompleteInput(BaseModel):
 
 
 @router.get("/policy")
-async def policy():
-    return service.policy()
+async def policy(request: Request):
+    return {
+        **service.policy(),
+        "local_passwordless_enabled": settings.allows_local_passwordless_login(
+            request.client.host if request.client else None
+        ) and settings.LOGIN_MODE != "wecom_only",
+    }
 
 
 @router.post("/wecom/start")

@@ -50,8 +50,8 @@ async def dispatch_loop():
 async def lifespan(app):
     # Schema changes are explicit via bootstrap; startup verifies the baseline exists.
     async with async_session() as db:
-        if not await db.get(FieldSchemaVersion, 11):
-            raise RuntimeError("Run python -m app.bootstrap to apply schema version 11 first")
+        if not await db.get(FieldSchemaVersion, 12):
+            raise RuntimeError("Run python -m app.bootstrap to apply schema version 12 first")
     worker = asyncio.create_task(dispatch_loop()) if settings.BACKGROUND_JOBS else None
     yield
     if worker:
@@ -114,7 +114,7 @@ async def download(file_path: str, request: Request, db=Depends(get_db)):
     )
     if not token:
         raise HTTPException(401, "请登录后访问文件")
-    user = await get_current_user(db, token)
+    user = await get_current_user(request, db, token)
     upload_root = (BACKEND_DIR / "uploads").resolve()
     target = (upload_root / file_path).resolve()
     if upload_root not in target.parents or not target.is_file():

@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { hasUsableWebAuthToken, getWebAuthRoles, isWebAuthSuperuser, hasWebManagementRoleSnapshot, clearWebAuthSession } from '@/utils/authSession'
+import { hasUsableWebAuthToken, getWebAuthRoles, isWebAuthSuperuser, hasWebManagementRoleSnapshot, getWebManagementSnapshotHomePath, clearWebAuthSession } from '@/utils/authSession'
 import { rememberLoginDestination } from '@/utils/wecom'
 import { useUserStore } from '@/stores/user'
 const admin = ['admin','hr']
@@ -28,7 +28,10 @@ router.beforeEach(async to=>{
   if(to.path!=='/login') rememberLoginDestination('web',to.fullPath)
   clearWebAuthSession();return to.path==='/login'?true:'/login'
  }
- if(to.path==='/login')return '/dashboard'
+ if(to.path==='/login')return getWebManagementSnapshotHomePath()
+ // Project leaders have a management session for their own project's schedule,
+ // not permission to enter the other management sections.
+ if(getWebAuthRoles().includes('project_leader') && !['/field','/rotation'].includes(to.path))return '/rotation'
  const roles=to.meta.roles as string[]|undefined
  if(roles && !isWebAuthSuperuser() && !getWebAuthRoles().some(r=>roles.includes(r)))return '/dashboard'
  return true

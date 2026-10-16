@@ -18,7 +18,9 @@ from app.models.audit_log import AuditLog
 from app.models.field_service import FieldAttendanceSegment, FieldProject
 from app.models.employee_role import EmployeeRole
 from app.models.rotation import RotationDay, RotationClaim, RotationAccount, RotationLedger
+from app.schemas.notification import NotificationCreate
 from app.services import field_service as field, field_roles
+from app.services.notification import NotificationService
 from app.services.field_membership import lock_person, snapshot, restore, utc, CST
 
 LABELS = {"work": "上班", "rest": "正常轮休", "leave": "调休", "half_leave": "半天调休", "pending": "待确认"}
@@ -138,16 +140,22 @@ async def preview(db, user, project_id, data):
     if data.start_date < max(today(), rule.effective_date):
         raise HTTPException(422, "周期排班须从今天或规则生效日之后开始，历史调整请使用调班申请")
     edits = {e.date: e for e in data.edits}
+    person_edits = {(e.employee_id, e.date): e for e in data.person_edits}
     result = []
     for eid in sorted(set(data.employee_ids)):
+        await field_roles.require_project_schedule_manager(db, user, project_id, eid)
         anchor = await personal_cycle_start(db, eid, data.cycle_start)
+        own_days = 0
         for offset in range((data.end_date - data.start_date).days + 1):
             day = data.start_date + timedelta(days=offset)
             if not await member_on(db, eid, project_id, day):
-                raise HTTPException(422, "所选日期内人员不属于该项目，请核对参与区间")
+                if not data.member_days_only or (eid, day) in person_edits:
+                    raise HTTPException(422, "所选日期内人员不属于该项目，请核对参与区间")
+                continue
+            own_days += 1
             row = await day_row(db, eid, day)
             original = "rest" if (day - anchor).days % 7 == 6 else "work"
-            edit = edits.get(day)
+            edit = person_edits.get((eid, day)) or edits.get(day)
             kind = edit.kind if edit else original
             if edit and "shift_label" in edit.model_fields_set:
                 shift_label = edit.shift_label
@@ -157,6 +165,8 @@ async def preview(db, user, project_id, data):
                 "original_kind": row.original_kind if row else original, "kind": kind,
                 "shift_label": shift_label if kind == "work" else None,
                 "expected_revision": row.revision if row else 0})
+        if not own_days:
+            raise HTTPException(422, "所选人员在这段日期内没有该项目的参与日期")
     digest = hashlib.sha256(json.dumps(jsonable_encoder([snapshot(rule), result]), sort_keys=True).encode()).hexdigest()
     return {"rows": result, "revision": digest, "rule_id": rule.id}
 
@@ -183,6 +193,14 @@ async def publish(db, user, project_id, data, revision):
         db.add(row)
         await db.flush()
         audit(db, user, "rotation_publish", before, day_view(row))
+    project = await db.get(FieldProject, project_id)
+    for eid in sorted({item["employee_id"] for item in plan["rows"]}):
+        dates = [item["date"] for item in plan["rows"] if item["employee_id"] == eid]
+        await NotificationService.create(db, NotificationCreate(
+            recipient_id=eid, sender_id=user.id, notif_type="system",
+            title="个人排班已发布",
+            content=f"{project.name}：{min(dates)} 至 {max(dates)} 已发布 {len(dates)} 天排班，请查看个人排班日历。",
+            ref_type="rotation_schedule", ref_id=project_id))
     return {"count": len(plan["rows"])}
 
 
@@ -685,6 +703,21 @@ async def review(db, user, claim_id, data):
     claim.status, claim.reviewed_by, claim.review_note = desired, user.id, data.note.strip()
     claim.reviewed_at = datetime.now(timezone.utc)
     audit(db, user, "rotation_" + data.action, before, snapshot(claim))
+    if claim.kind == "schedule" and data.action in {"approve", "revoke"} and desired in {"approved", "revoked"}:
+        project_days = {}
+        for item in claim.days:
+            if data.action == "revoke":
+                pid = item.get("before_project_id") or item.get("project_id") or claim.project_id
+            else:
+                pid = item.get("project_id") or claim.project_id
+            project_days.setdefault(pid, []).append(date.fromisoformat(item["date"]))
+        for pid, dates in project_days.items():
+            project = await db.get(FieldProject, pid)
+            await NotificationService.create(db, NotificationCreate(
+                recipient_id=claim.employee_id, sender_id=user.id, notif_type="system",
+                title="个人排班调整已生效" if data.action == "approve" else "个人排班调整已撤销",
+                content=f"{project.name}：{min(dates)} 至 {max(dates)} 的排班已更新，请查看个人排班日历。",
+                ref_type="rotation_schedule", ref_id=pid))
     await db.flush()
     return await claim_view(db, claim, user)
 

@@ -60,12 +60,35 @@ def has_management_login_role(role_names: set[str]) -> bool:
 
 
 async def _authenticate_for_login(
+    request: Request,
     db: AsyncSession,
     data: LoginRequest,
-) -> Employee:
+) -> tuple[Employee, bool]:
     if settings.LOGIN_MODE == "wecom_only":
         raise HTTPException(403, "正式环境仅允许企业微信登录")
-    employee = await EmployeeService.authenticate(db, data.phone, data.password)
+    # The local demo can select an account without a password only when the
+    # server was explicitly started for development on a local SQLite DB and
+    # the request came from the loopback interface. Non-empty passwords still
+    # follow normal credential verification in that environment.
+    local_passwordless = not data.password and settings.allows_local_passwordless_login(
+        request.client.host if request.client else None
+    )
+    if local_passwordless:
+        employee = await EmployeeService.get_by_phone(db, data.phone)
+        # Demo accounts 001-019 are employee numbers, not phone numbers. Only
+        # resolve them after the local passwordless guard above has passed.
+        is_short_demo_account = (
+            len(data.phone) == 3
+            and data.phone.isascii()
+            and data.phone.isdigit()
+            and 1 <= int(data.phone) <= 19
+        )
+        if not employee and is_short_demo_account:
+            employee = await db.scalar(
+                select(Employee).where(Employee.employee_no == data.phone)
+            )
+    else:
+        employee = await EmployeeService.authenticate(db, data.phone, data.password)
     if not employee:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -77,7 +100,7 @@ async def _authenticate_for_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="账号已被停用",
         )
-    return employee
+    return employee, local_passwordless
 
 
 def get_login_token_expires_delta(remember_me: bool) -> timedelta | None:
@@ -87,11 +110,14 @@ def get_login_token_expires_delta(remember_me: bool) -> timedelta | None:
     return timedelta(days=settings.REMEMBER_ME_ACCESS_TOKEN_EXPIRE_DAYS)
 
 
-def _issue_login_token(employee: Employee, remember_me: bool = False) -> Token:
+def _issue_login_token(
+    employee: Employee, remember_me: bool = False, *, local_passwordless: bool = False
+) -> Token:
     # 生成 JWT，sub 字段存储员工 ID 的字符串形式
     access_token = create_access_token(
         subject=str(employee.id),
         expires_delta=get_login_token_expires_delta(remember_me),
+        identity={"auth_method": "local_passwordless"} if local_passwordless else None,
     )
     return Token(access_token=access_token)
 
@@ -134,8 +160,8 @@ async def login(
         403 Forbidden    — 账号已被停用
         429 Too Many Requests — 触发限流（5次/分钟）
     """
-    employee = await _authenticate_for_login(db, data)
-    return _issue_login_token(employee, remember_me=data.remember_me)
+    employee, local_passwordless = await _authenticate_for_login(request, db, data)
+    return _issue_login_token(employee, remember_me=data.remember_me, local_passwordless=local_passwordless)
 
 
 @router.post("/management-login", response_model=Token, summary="管理端账号/手机号+密码登录")
@@ -152,7 +178,7 @@ async def management_login(
     只有 admin / hr / manager 或超级管理员可以获得管理端 Token。
     普通 employee 账号应使用移动端入口，不能进入管理端。
     """
-    employee = await _authenticate_for_login(db, data)
+    employee, local_passwordless = await _authenticate_for_login(request, db, data)
     role_names = await get_user_role_names(db, employee)
     if not has_management_login_role(role_names) and not await db.scalar(
             select(FieldProject.id).where(FieldProject.manager_id == employee.id).limit(1)):
@@ -160,7 +186,7 @@ async def management_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="当前账号未开通管理端权限，请使用员工端入口",
         )
-    return _issue_login_token(employee)
+    return _issue_login_token(employee, local_passwordless=local_passwordless)
 
 
 @router.get("/management-session", response_model=EmployeeOut, summary="复核管理后台访问权限")

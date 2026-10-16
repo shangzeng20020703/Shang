@@ -44,8 +44,9 @@ async def main():
 
         await login("admin", "19900000001", "Demo-AfterSales-2026!")
         await login("legacy", "19900000002", "Demo-AfterSales-2026!")
-        async def person(name, phone, role="employee"):
-            row = await req("POST", "/field/people", json={"name": name, "phone": phone, "role": role})
+        async def person(name, phone, role="employee", category=None):
+            row = await req("POST", "/field/people", json={"name": name, "phone": phone, "role": role,
+                **({"field_staff_category": category} if category else {})})
             await login(name, phone)
             return row["id"]
 
@@ -54,6 +55,8 @@ async def main():
         manager = await person("售后经理", "13800000903", "aftersales_manager")
         member = await person("跨项目组员", "13800000904")
         ordinary = await person("普通现场组员", "13800000906")
+        b_leader = await person("乙项目组长", "13800000907", category="leader_candidate")
+        unowned_leader = await person("待分配项目组长", "13800000908", category="leader_candidate")
         day = datetime.now(CST).date() - timedelta(days=1)
         async with async_session() as db:
             company_person = Employee(employee_no="COMPANY-ROLE-QA", name="非售后员工",
@@ -84,7 +87,7 @@ async def main():
         assert rule
         project_b = (await req("POST", "/field/projects", json={
             "code": "ROLE-B", "name": "权限项目乙", "customer_id": customer,
-            "manager_id": member})) ["id"]
+            "manager_id": b_leader})) ["id"]
         await req("PUT", f"/field/projects/{project_b}/configuration", json={"rule_id": rule})
         await req("PUT", f"/field/projects/{project_a}/regional-leads", "legacy", expected=403,
                   json={"primary_lead_id": lead_a})
@@ -110,7 +113,7 @@ async def main():
                   json={"primary_lead_id": lead_a})
         await req("GET", "/auth/management-session", "区域甲")
         await req("GET", "/auth/management-session", "售后经理")
-        await req("GET", "/auth/management-session", "跨项目组员")  # project B leader
+        await req("GET", "/auth/management-session", "乙项目组长")
         await req("PUT", f"/attendance/projects/{project_b}/rule", "区域甲", expected=403,
                   json={"name": "禁止改乙"})
         before_b = (await req("GET", f"/attendance/projects/{project_b}/rule", "区域甲"))["id"]
@@ -207,7 +210,7 @@ async def main():
         assignment = next(a["id"] for a in current["assignments"] if a["employee_id"] == member and a["is_current"])
         unowned = (await req("POST", "/field/projects", json={
             "code": "ROLE-NO-REGION", "name": "缺主责项目", "customer_id": customer,
-            "manager_id": ordinary}))["id"]
+            "manager_id": unowned_leader}))["id"]
         await req("PUT", f"/field/projects/{unowned}/configuration", json={"rule_id": rule})
         await req("POST", f"/field/assignments/{assignment}/transfer", "售后经理", expected=409,
                   json={"project_id": project_b})

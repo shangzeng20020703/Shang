@@ -4,7 +4,7 @@
     <div class="page-header">
       <div class="page-header__left">
         <h1 class="page-title">{{projectRuleMode?'项目专用考勤规则':'考勤管理'}}</h1>
-        <p class="page-desc">{{projectRuleMode?'仅修改当前项目；保存后生成专用规则版本':'管理考勤打卡，实时掌握员工出勤状况'}}</p>
+        <p class="page-desc">{{projectRuleMode?(canEditProjectRule?'仅修改当前项目；保存后生成专用规则版本':'查看当前项目的考勤规则'):'管理考勤打卡，实时掌握员工出勤状况'}}</p>
       </div>
     </div>
 
@@ -323,16 +323,34 @@
         </el-tab-pane>
 
         <!-- Tab: 考勤规则 -->
-        <el-tab-pane v-if="projectRuleMode || canManageGlobalRules" :label="projectRuleMode?'项目专用规则':'考勤规则'" name="rules">
-          <el-alert :title="projectRuleMode?'当前项目规则':'统一维护项目考勤规则'" type="info" :closable="false" show-icon style="margin-bottom:16px">
-            <template v-if="projectRuleMode">这里编辑项目 {{projectRuleId}} 的规则。保存后生成该项目的专用版本，其他项目的规则保持原样。</template>
-            <template v-else>在这里配置上下班时间、定位 / WiFi 和照片要求；项目库直接选用已启用的规则。<router-link to="/field">前往项目库</router-link></template>
+        <el-tab-pane v-if="projectRuleMode || canManageGlobalRules || canManageProjectRules" :label="projectRuleMode?'项目专用规则':'考勤规则'" name="rules">
+          <el-alert :title="projectRuleMode?'当前项目规则':canManageGlobalRules?'统一维护项目考勤规则':'按项目配置考勤规则'" type="info" :closable="false" show-icon style="margin-bottom:16px">
+            <template v-if="projectRuleMode">{{selectedProject?.name || `项目 ${projectRuleId}`}} 的规则；请先在项目库分配人员，再选择“现场轮休”并设置每日工时。保存后待配置人员会统一启用。</template>
+            <template v-else-if="canManageGlobalRules">在这里配置上下班时间、定位 / WiFi 和照片要求；项目库直接选用已启用的规则。<router-link to="/field">前往项目库</router-link></template>
+            <template v-else>可查看全部项目规则；区域组长只能新建或修改售后经理分配的项目，售后经理可管理全部项目。节假日表仍由系统管理员维护。</template>
           </el-alert>
-          <div class="filter-row">
+          <div v-if="!projectRuleMode && !canManageGlobalRules" class="filter-row">
+            <el-button @click="fetchProjectDirectory"><el-icon><Refresh /></el-icon> 刷新项目</el-button>
+            <router-link to="/field">前往项目库</router-link>
+          </div>
+          <el-table v-if="!projectRuleMode && !canManageGlobalRules" :data="projectDirectory" v-loading="projectDirectoryLoading" class="modern-table" empty-text="暂无项目">
+            <el-table-column prop="code" label="项目编号" width="140" />
+            <el-table-column prop="name" label="项目名称" min-width="240" />
+            <el-table-column prop="rule_name" label="当前规则" min-width="220"><template #default="{ row }">{{ row.rule_name || '尚未配置' }}</template></el-table-column>
+            <el-table-column label="操作" width="170"><template #default="{ row }"><el-button link type="primary" @click="openProjectRule(row)">{{ row.can_manage ? (row.rule_id ? '编辑本项目规则' : '新建本项目规则') : '查看项目规则' }}</el-button></template></el-table-column>
+          </el-table>
+          <el-alert v-if="projectDirectoryError && !projectRuleMode && !canManageGlobalRules" :title="projectDirectoryError" type="error" :closable="false" show-icon />
+          <div v-if="projectRuleMode || canManageGlobalRules" class="filter-row">
+            <el-button v-if="projectRuleMode" @click="router.push('/attendance?tab=rules')">返回规则列表</el-button>
             <el-button v-if="canManageGlobalRules" @click="openHolidayCalendar"><el-icon><Calendar /></el-icon> 节假日表</el-button>
             <el-button v-if="!projectRuleMode" type="primary" @click="openRuleDialog()">
               <el-icon><Plus /></el-icon> 新增规则
             </el-button>
+            <el-button v-if="projectRuleMode && canEditProjectRule && projectRuleMissing" type="primary" @click="openRuleDialog()">
+              <el-icon><Plus /></el-icon> 新建现场轮休规则
+            </el-button>
+            <el-button v-if="projectRuleMode && projectPendingMembers.length && selectedProject?.rule_id" :loading="projectActivationLoading" @click="activateProjectMembers">重试启用待配置人员（{{projectPendingMembers.length}}）</el-button>
+            <el-button v-if="projectRuleMode && projectRotationReady" type="primary" :disabled="!!projectPendingMembers.length" @click="router.push({path:'/rotation',query:{project_id:projectRuleId}})">打开本项目个人排班</el-button>
             <el-select v-if="!projectRuleMode" v-model="ruleStatusFilter" placeholder="规则状态" clearable style="width: 140px" @change="fetchRules">
               <el-option label="启用" :value="true" />
               <el-option label="停用" :value="false" />
@@ -342,10 +360,15 @@
             </el-button>
           </div>
 
-          <el-table :data="rules" v-loading="ruleLoading" class="modern-table" row-class-name="modern-row">
+          <el-alert v-if="ruleLoadError && (projectRuleMode || canManageGlobalRules)" :title="ruleLoadError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectActivationError" :title="projectActivationError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectPendingMembers.length && !projectActivationError" :title="`${projectPendingMembers.length} 位人员待生效；全部启用后才能按本项目打卡和排班`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRuleMissing" title="当前项目尚未配置考勤规则" type="info" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-table v-if="projectRuleMode || canManageGlobalRules" :data="rules" v-loading="ruleLoading" class="modern-table" row-class-name="modern-row">
             <el-table-column prop="name" label="规则名称" min-width="180">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openRuleDialog(row)">{{ row.name }}</el-button>
+                <el-button v-if="!projectRuleMode || canEditProjectRule" link type="primary" @click="openRuleDialog(row)">{{ row.name }}</el-button>
+                <span v-else>{{ row.name }}</span>
               </template>
             </el-table-column>
             <el-table-column label="规则类型" width="140" align="center">
@@ -393,7 +416,7 @@
                 />
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="260" fixed="right">
+            <el-table-column v-if="!projectRuleMode || canEditProjectRule" label="操作" width="260" fixed="right">
               <template #default="{ row }">
                 <el-button type="primary" link size="small" @click="openRuleDialog(row)">编辑</el-button>
                 <el-button v-if="!projectRuleMode" type="success" link size="small" @click="copyRule(row)">复制</el-button>
@@ -2716,7 +2739,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import request, { get, post, put, del } from '@/utils/request'
@@ -2737,13 +2760,78 @@ use([CanvasRenderer, BarChart, LineChart, PieChart, GridComponent, LegendCompone
 
 // ============ State ============
 const route = useRoute()
+const router = useRouter()
 const projectRuleId = computed(() => Number(route.query.project_id || 0))
 const projectRuleMode = computed(() => Number.isInteger(projectRuleId.value) && projectRuleId.value > 0)
 const canManageGlobalRules = computed(() => isWebAuthSuperuser() || getWebAuthRoles().some(role => ['admin','hr'].includes(role)))
+const canManageProjectRules = computed(() => getWebAuthRoles().some(role => ['aftersales_manager','regional_lead'].includes(role)))
+const projectDirectory = ref<any[]>([])
+const projectPendingDirectory = ref<any[]>([])
+const projectDirectoryLoading = ref(false)
+const projectDirectoryError = ref('')
+const selectedProject = computed(() => projectDirectory.value.find(project => Number(project.id) === projectRuleId.value))
+const projectPendingMembers = computed(() => projectPendingDirectory.value.filter(member => Number(member.project_id) === projectRuleId.value))
+const projectRotationReady = computed(() => !!selectedProject.value?.rule_id && rules.value.some((rule: any) => Number(rule.id) === Number(selectedProject.value.rule_id) && rule.extra?.rule_type === 'rotation'))
+const projectActivationError = ref('')
+const projectActivationLoading = ref(false)
+const canEditProjectRule = computed(() => !!selectedProject.value?.can_manage)
+const projectRuleMissing = ref(false)
+const ruleLoadError = ref('')
 const activeTab = ref(route.query.tab === 'rules' || projectRuleMode.value ? 'rules' : 'records')
 watch(() => route.query.tab, tab => {
-  if (tab === 'rules') { activeTab.value = 'rules'; fetchRules() }
+  if (tab === 'rules') {
+    activeTab.value = 'rules'
+    if (!projectRuleMode.value) fetchRules()
+  }
 })
+watch(projectRuleId, async () => {
+  activeTab.value = 'rules'
+  projectActivationError.value = ''
+  await fetchProjectDirectory()
+  await fetchRules()
+})
+async function fetchProjectDirectory() {
+  projectDirectoryLoading.value = true
+  projectDirectoryError.value = ''
+  try {
+    const result = await get('/field/directory')
+    projectDirectory.value = Array.isArray(result?.projects) ? result.projects : []
+    projectPendingDirectory.value = Array.isArray(result?.pending_members) ? result.pending_members : []
+  } catch {
+    projectDirectory.value = []
+    projectPendingDirectory.value = []
+    projectDirectoryError.value = '项目列表读取失败，请刷新重试'
+  } finally {
+    projectDirectoryLoading.value = false
+  }
+}
+function openProjectRule(project: any) {
+  router.push({ path: '/attendance', query: { tab: 'rules', project_id: project.id } })
+}
+function projectActivationMessage(error: any) {
+  const detail = error?.response?.data?.detail
+  if (detail && typeof detail === 'object' && Array.isArray(detail.conflicts)) {
+    const people = detail.conflicts.map((conflict: any) => `${conflict.employee_name || `人员${conflict.employee_id}`}${conflict.project_name ? `（${conflict.project_name}）` : ''}${conflict.reason ? `：${conflict.reason}` : ''}`)
+    return `${detail.message || '项目人员尚未生效'}：${people.join('；')}`
+  }
+  return typeof detail === 'string' ? detail : '人员启用失败，请在项目库核对后重试'
+}
+async function activateProjectMembers() {
+  if (!projectRuleMode.value) return false
+  projectActivationLoading.value = true
+  projectActivationError.value = ''
+  try {
+    await post(`/field/projects/${projectRuleId.value}/members/activate`, {})
+    await fetchProjectDirectory()
+    return true
+  } catch (error: any) {
+    projectActivationError.value = projectActivationMessage(error)
+    await fetchProjectDirectory()
+    return false
+  } finally {
+    projectActivationLoading.value = false
+  }
+}
 const reportTab = ref<'daily-report' | 'summary'>('daily-report')
 const {
   departments: deptOptions,
@@ -5707,15 +5795,17 @@ function removeWifi(index: number) {
 
 async function fetchRules() {
   ruleLoading.value = true
+  ruleLoadError.value = ''
+  projectRuleMissing.value = false
   try {
     if (projectRuleMode.value) {
-      const rule = await get(`/attendance/projects/${projectRuleId.value}/rule`)
+      const rule = await get(`/attendance/projects/${projectRuleId.value}/rule`, undefined, { skipDefaultErrorHandler: true })
       rules.value = rule ? [normalizeRule(rule)] : []
       return
     }
     if (!canManageGlobalRules.value) {
-      const directory = await get('/field/directory')
-      rules.value = (directory.rules || []).map((row: any) => normalizeRule({ ...row, extra_config: { rule_type: row.rule_type } }))
+      rules.value = []
+      await fetchProjectDirectory()
       return
     }
     const params: any = {}
@@ -5723,17 +5813,29 @@ async function fetchRules() {
     const res = await get('/attendance/rules', params)
     const list = res.items || res.data || res || []
     rules.value = list.map(normalizeRule)
-  } catch { rules.value = [] }
+  } catch (error: any) {
+    rules.value = []
+    if (projectRuleMode.value && error?.response?.status === 404 && selectedProject.value && !selectedProject.value.rule_id) {
+      projectRuleMissing.value = true
+    } else {
+      ruleLoadError.value = '考勤规则读取失败，请刷新重试'
+    }
+  }
   finally { ruleLoading.value = false }
 }
 
 function openRuleDialog(row?: any) {
+  if (projectRuleMode.value && (!canEditProjectRule.value || (!row && !projectRuleMissing.value))) return
   if (row) {
     ruleForm.value = normalizeRule(row)
     if (projectRuleMode.value) ruleForm.value.extra.scope_mode = 'project'
   } else {
     ruleForm.value = defaultRuleForm()
     ruleForm.value.extra.scope_mode = 'project'
+    if (projectRuleMode.value) {
+      changeRuleType('rotation')
+      ruleForm.value.name = `${selectedProject.value?.name || '项目'}现场轮休规则`
+    }
   }
   assigneePickerVisible.value = false
   assigneeKeyword.value = ''
@@ -5908,6 +6010,7 @@ function buildRulePayload() {
 }
 
 async function submitRule() {
+  if (projectRuleMode.value && !canEditProjectRule.value) return
   const el = ruleFormRef.value
   if (!el) return
   if (!(await el.validate().catch(() => false))) return
@@ -5993,10 +6096,17 @@ async function submitRule() {
   try {
     const payload = buildRulePayload()
     if (projectRuleMode.value) {
-      await put(`/attendance/projects/${projectRuleId.value}/rule`, payload)
+      if (projectRuleMissing.value) {
+        await post(`/attendance/projects/${projectRuleId.value}/rule`, payload)
+      } else {
+        await put(`/attendance/projects/${projectRuleId.value}/rule`, payload)
+      }
       ruleDialogVisible.value = false
+      await fetchProjectDirectory()
       await fetchRules()
-      ElMessage.success('本项目专用规则已保存，其他项目不受影响')
+      const activated = await activateProjectMembers()
+      if (activated) ElMessage.success('本项目专用规则已保存，人员已启用；可打开个人排班')
+      else ElMessage.warning('规则已保存；待配置人员仍有冲突，请处理后重试启用')
       return
     }
     let savedRuleId = Number(ruleForm.value.id || 0)
@@ -7585,6 +7695,7 @@ async function resumeSummaryTaskFromStorage() {
 }
 
 onMounted(async () => {
+  if (projectRuleMode.value) await fetchProjectDirectory()
   await fetchOptions()
   if (projectRuleMode.value) { await fetchRules(); return }
   loadDailyReportSettings()

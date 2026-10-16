@@ -2,6 +2,7 @@
 
 import os
 import secrets
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Optional, Literal
 from urllib.parse import urlparse
@@ -52,6 +53,8 @@ class Settings(BaseSettings):
         "http://localhost:5187",
     ]
     LOGIN_MODE: Literal["password", "hybrid", "wecom_only"] = "password"
+    # Explicit opt-in for local demos. Never enable this on a deployed service.
+    LOCAL_PASSWORDLESS_LOGIN: bool = False
     TEGENE_API_BASE_URL: str = ""
     TEGENE_ACCESS_TOKEN: str = ""
     TEGENE_TOKEN_URL: str = ""
@@ -80,7 +83,23 @@ class Settings(BaseSettings):
             raise ValueError("SECRET_KEY must contain at least 32 characters")
         if self.LOGIN_MODE == "wecom_only" and not self.wecom_ready:
             raise ValueError("WeCom-only login requires CorpID, AgentID, Secret and both HTTPS callback URLs")
+        if self.LOCAL_PASSWORDLESS_LOGIN and (
+            self.ENVIRONMENT != "development"
+            or not self.DATABASE_URL.startswith("sqlite+aiosqlite:///")
+        ):
+            raise ValueError("Local passwordless login requires development and a local SQLite database")
         return self
+
+    def allows_local_passwordless_login(self, client_host: str | None) -> bool:
+        """Do not trust browser flags or forwarded headers for the local-only bypass."""
+        if not self.LOCAL_PASSWORDLESS_LOGIN or self.ENVIRONMENT != "development":
+            return False
+        if not self.DATABASE_URL.startswith("sqlite+aiosqlite:///"):
+            return False
+        try:
+            return bool(client_host and ip_address(client_host).is_loopback)
+        except ValueError:
+            return False
 
     @property
     def wecom_ready(self):

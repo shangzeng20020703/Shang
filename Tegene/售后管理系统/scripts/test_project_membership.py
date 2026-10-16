@@ -21,6 +21,7 @@ from app.models.employee import Employee
 from app.models.attendance import AttendanceRecord, AttendanceRule, AttendancePunchTimeRecord
 from app.models.field_service import FieldMembership, FieldAttendanceSegment
 from app.services import field_membership as service
+from app.services import field_pending
 
 
 async def main():
@@ -55,6 +56,16 @@ async def main():
                   json={"phone": "13800000111", "password": "585858"})
         directory = await req("GET", "/field/directory")
         base = directory["projects"][0]
+        # Project leaders now join their appointed projects automatically.
+        # Give A and B distinct leaders so the fixture itself does not create
+        # a conflicting cross-project membership for the seeded manager.
+        leaders = {}
+        for code, phone in [("FLOW-A", "13800000114"), ("FLOW-B", "13800000115")]:
+            leader = await req("POST", "/field/people", json={
+                "name": f"{code} 组长", "phone": phone,
+                "employee_no": f"{code}-LEAD", "role": "employee",
+                "status": "在职", "is_active": True})
+            leaders[code] = leader["id"]
         projects = []
         for code, clock_in in [("FLOW-A", "08:00:00"), ("FLOW-B", "10:00:00")]:
             rule = await req("POST", "/attendance/rules", expected=201,
@@ -64,7 +75,7 @@ async def main():
                       "extra_config": {"scope_mode": "project"}})
             project = await req("POST", "/field/projects", json={
                 "code": code, "name": code, "customer_id": base["customer_id"],
-                "manager_id": base["manager_id"]})
+                "manager_id": leaders[code]})
             await req("PUT", f"/field/projects/{project['id']}/configuration",
                       json={"rule_id": rule["id"]})
             projects.append((project["id"], rule["id"]))
@@ -83,7 +94,8 @@ async def main():
         await req("PUT", f"/field/projects/{b}/regional-leads", json={
             "primary_lead_id": lead_b, "reason": "测试接收项目主责"})
 
-        with patch.object(service, "clock_now", side_effect=lambda: moment):
+        with patch.object(service, "clock_now", side_effect=lambda: moment), \
+                patch.object(field_pending, "clock_now", side_effect=lambda: moment):
             added = await req("POST", f"/field/projects/{a}/members", json={"employee_ids": [eid]})
             assignment_a = added["members"][0]["id"]
             await req("POST", f"/field/assignments/{assignment_a}/transfer", expected=409,

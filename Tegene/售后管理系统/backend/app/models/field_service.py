@@ -37,9 +37,22 @@ class FieldProject(Base):
     code: Mapped[str] = mapped_column(String(50), unique=True)
     name: Mapped[str] = mapped_column(String(150))
     customer_id: Mapped[int] = mapped_column(ForeignKey("field_customers.id"))
-    manager_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    # A newly created local project can wait for its first project leader.
+    manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class FieldProjectPendingMember(Base):
+    """A project roster choice before a rule makes attendance participation effective."""
+    __tablename__ = "field_project_pending_members"
+    __table_args__ = (UniqueConstraint("project_id", "employee_id", name="uq_field_pending_project_person"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("field_projects.id"), index=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    is_leader_auto: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class FieldRegionalAssignment(Base):

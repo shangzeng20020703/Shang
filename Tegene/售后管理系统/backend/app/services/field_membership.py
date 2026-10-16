@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, text, or_
 
 from app.models.employee import Employee
-from app.models.field_service import FieldAssignment, FieldAssignmentDay, FieldMembership, FieldAttendanceSegment, FieldSite, FieldProject, FieldTransferRequest
+from app.models.field_service import FieldAssignment, FieldAssignmentDay, FieldMembership, FieldAttendanceSegment, FieldSite, FieldProject, FieldTransferRequest, FieldProjectPendingMember
 from app.models.attendance import AttendanceRecord, AttendanceRule, AttendanceStatus, CorrectionStatus, ClockSource, ShiftSchedule
 
 CST = timezone(timedelta(hours=8))
@@ -125,6 +125,9 @@ async def managed_field_person(db, employee_id, person=None):
         return False
     if person.is_field_staff:
         return True
+    if await db.scalar(select(FieldProjectPendingMember.id).where(
+            FieldProjectPendingMember.employee_id == employee_id).limit(1)):
+        return True
     return (await db.execute(select(FieldMembership.id).where(FieldMembership.employee_id == employee_id).limit(1))).scalar_one_or_none() is not None
 
 
@@ -147,6 +150,10 @@ async def day_runtime(db, person, day):
     rule = await db.get(AttendanceRule, rule_id)
     if not rule or rule.effective_date > day:
         return None
+    if owner and (rule.extra_config or {}).get("rule_type") == "rotation":
+        from app.services.field_pending import rotation_punch_ready
+        if not await rotation_punch_ready(db, person.id, site.project_id, day):
+            return None
     runtime = attendance._build_runtime(rule, shift, day)
     attendance._apply_rule_runtime_people(runtime, person.id)
     runtime.update(employee=person, shift=shift, project_assigned=True)
@@ -158,36 +165,16 @@ async def day_runtime(db, person, day):
 
 async def add_members(db, user, project_id, employee_ids):
     from app.services import field_service as service
+    from app.services import field_pending
     project = await service.require_project_manager(db, user, project_id)
     site = await service.project_site(db, project_id)
     rule = await db.get(AttendanceRule, site.rule_id) if site else None
-    if not project.is_active or not site or not rule or not rule.is_active or rule.effective_date > clock_now().astimezone(CST).date():
-        raise HTTPException(422, "请先为项目配置已生效的考勤规则")
-    result = []
-    for employee_id in sorted(set(employee_ids)):
-        person = await lock_person(db, employee_id)
-        now = clock_now()
-        if not person or not person.is_active or person.status not in {"在职", "试用"}:
-            raise HTTPException(422, "只能添加花名册中在职且启用的人员")
-        existing = await current(db, employee_id, now)
-        if existing:
-            raise HTTPException(409, f"{person.name}已在{existing[3].name}，请从原项目使用调动功能")
-        earlier_today = await project_on(db, employee_id, now.astimezone(CST).date())
-        if earlier_today:
-            raise HTTPException(409, f"{person.name}今天已归属{earlier_today[3].name}，新项目须从未来日期开始")
-        planned = await db.scalar(select(FieldMembership.id).where(FieldMembership.employee_id == employee_id, FieldMembership.started_at > now, or_(FieldMembership.ended_at.is_(None), FieldMembership.ended_at > FieldMembership.started_at)).limit(1))
-        if planned:
-            raise HTTPException(409, f"{person.name}还有未来项目安排，请先移出该安排")
-        assignment = FieldAssignment(site_id=site.id, employee_id=employee_id, start_date=now.astimezone(CST).date(),
-                                     end_date=date(9999, 12, 30), created_by=user.id, status="active")
-        db.add(assignment)
-        await db.flush()
-        membership = FieldMembership(assignment_id=assignment.id, employee_id=employee_id,
-                                      started_at=now, active_employee_id=employee_id)
-        db.add(membership)
-        await db.flush()
-        result.append({"id": assignment.id, "employee_id": employee_id, "project_id": project_id, "started_at": now})
-    return {"members": result}
+    if not project.is_active:
+        raise HTTPException(422, "项目已停用")
+    staged = await field_pending.stage_members(db, user, project_id, employee_ids)
+    if not site or not rule or not rule.is_active:
+        return staged
+    return await field_pending.activate_members(db, user, project_id)
 
 
 async def preserve_legacy_day(db, employee_id, day):
@@ -551,6 +538,17 @@ async def punch_context(db, employee_id, now=None):
         if (start and end and end <= start and now.astimezone(CST) <= datetime.combine(day, end, CST) + timedelta(hours=4)) or (cutoff and now.astimezone(CST).time() < cutoff):
             day = previous.work_date
     segment = await db.scalar(select(FieldAttendanceSegment).where(FieldAttendanceSegment.membership_id == membership.id, FieldAttendanceSegment.work_date == day))
+    legacy_close_only = False
+    if (rule.extra_config or {}).get("rule_type") == "rotation":
+        from app.services.field_pending import rotation_punch_ready
+        if not await rotation_punch_ready(db, employee_id, project.id, day):
+            # A rule change cannot strand an already started shift. The saved
+            # segment keeps its original rule, but only its outstanding clock-out
+            # may proceed until the first rotation schedule is published.
+            punches = segment.record_data if segment else {}
+            if not punches.get("clock_in_time") or punches.get("clock_out_time"):
+                return None
+            legacy_close_only = True
     if not segment:
         legacy_rule_id = await db.scalar(select(ShiftSchedule.rule_id).join(FieldAssignmentDay, FieldAssignmentDay.shift_id == ShiftSchedule.id)
             .where(FieldAssignmentDay.assignment_id == assignment.id, FieldAssignmentDay.work_date == day))
@@ -567,21 +565,26 @@ async def punch_context(db, employee_id, now=None):
         status=AttendanceStatus.normal, source=ClockSource.app, correction_status=CorrectionStatus.none,
         created_at=now, is_mock_location=False)
     return dict(membership=membership, project=project, day=day, segment=segment, rule_snapshot=frozen,
-                runtime=runtime, record=record, revision=revision, now=now)
+                runtime=runtime, record=record, revision=revision, now=now,
+                legacy_close_only=legacy_close_only)
 
 
-async def prepare_punch(db, employee_id, data):
+async def prepare_punch(db, employee_id, data, *, phase):
     person = await lock_person(db, employee_id)
     if not person or not person.is_active or person.status not in {"在职", "试用"}:
         raise HTTPException(403, "账号已锁定")
     context = await punch_context(db, employee_id)
     if not context:
-        raise HTTPException(409, "尚未分配有效项目或考勤规则，请联系项目负责人")
+        raise HTTPException(409, "尚未分配有效项目、考勤规则或首次发布的个人排班，请联系项目负责人")
+    if context["legacy_close_only"] and phase != "clock_out":
+        raise HTTPException(409, "请先发布个人排班；当前只允许完成已有班次的下班打卡")
     if data.project_context != context["revision"]:
         raise HTTPException(409, "项目或考勤规则已更新，请刷新后重新打卡")
     await preserve_legacy_day(db, employee_id, context["day"])
     # Legacy preservation may have created this segment.
     context = await punch_context(db, employee_id, context["now"])
+    if not context or (context["legacy_close_only"] and phase != "clock_out"):
+        raise HTTPException(409, "项目或排班已变化，请刷新后重新打卡")
     daily = await db.scalar(select(AttendanceRecord).where(AttendanceRecord.employee_id == employee_id, AttendanceRecord.date == context["day"]))
     if not daily:
         daily = AttendanceRecord(employee_id=employee_id, date=context["day"])
