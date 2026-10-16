@@ -4,7 +4,8 @@
 
 | 版本 | 来源提交 | 逐文件清单 | 状态 |
 |---|---|---|---|
-| [20261016-095945-CST-d753ad1](versions/20261016-095945-CST-d753ad1/) | `d753ad109bbad801425437f9c384ce76a88b29db` | [JSON](versions/manifests/20261016-095945-CST-d753ad1.json) | 当前；现场轮休与待休流水 |
+| [20261016-150240-CST-d60ebcb](versions/20261016-150240-CST-d60ebcb/) | `d60ebcb204f22079d8cae0d3ae2130eefdc8c65b` | [JSON](versions/manifests/20261016-150240-CST-d60ebcb.json) | 当前；现场权限与跨项目排班审批 |
+| [20261016-095945-CST-d753ad1](versions/20261016-095945-CST-d753ad1/) | `d753ad109bbad801425437f9c384ce76a88b29db` | [JSON](versions/manifests/20261016-095945-CST-d753ad1.json) | 历史版本；现场轮休与待休流水 |
 | [20261016-095417-CST-e18f737](versions/20261016-095417-CST-e18f737/) | `e18f73794f53be32cbc7870b027e1bb81d3014a2` | [JSON](versions/manifests/20261016-095417-CST-e18f737.json) | 历史版本；现场轮休与待休流水 |
 | [20261015-184321-CST-49f8eb8](versions/20261015-184321-CST-49f8eb8/) | `49f8eb8838b8e037a7e8f5184e277e1a837901bf` | [JSON](versions/manifests/20261015-184321-CST-49f8eb8.json) | 历史版本；50 行分页与管理员节假日表 |
 | [20261015-142156-CST-5939798](versions/20261015-142156-CST-5939798/) | `59397984c7807a8f57867882c0b0510f8f6ffa7a` | [JSON](versions/manifests/20261015-142156-CST-5939798.json) | 历史版本 |

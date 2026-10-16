@@ -145,8 +145,10 @@ async def complete(db, client, state, verifier, code):
         raise HTTPException(403, "未绑定有效在职花名册账号，请联系售后负责人")
     if client == "web":
         from app.core.deps import get_user_role_names
-        if not await get_user_role_names(db, user) & {"admin", "hr", "manager"}:
-            raise HTTPException(403, "当前账号未开通管理端权限，请使用员工端入口")
+        if not await get_user_role_names(db, user) & {"admin", "hr", "manager", "regional_lead", "aftersales_manager"}:
+            from app.models.field_service import FieldProject
+            if not await db.scalar(select(FieldProject.id).where(FieldProject.manager_id == user.id).limit(1)):
+                raise HTTPException(403, "当前账号未开通管理端权限，请使用员工端入口")
     return {"access_token": create_access_token(str(user.id), timedelta(minutes=15), identity={
         "auth_method": "wecom", "corp_id": binding.corp_id, "wecom_userid": binding.userid,
         "binding_id": binding.id}), "token_type": "bearer"}

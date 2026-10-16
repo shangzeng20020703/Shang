@@ -2817,13 +2817,15 @@ const ruleSettings = reactive({
 const TEMPLATE_CONFIG_ROLES = new Set(['admin', 'hr'])
 const approvalRoleOptions: RoleOption[] = [
   { value: 'manager', label: '经理' },
+  { value: 'aftersales_manager', label: '售后经理' },
+  { value: 'regional_lead', label: '区域组长' },
   { value: 'hr', label: 'HR' },
   { value: 'admin', label: '管理员' },
   { value: 'finance', label: '财务' },
   { value: 'asset_admin', label: '资产管理员' },
 ]
 const approvalRoleTreeGroups = [
-  { key: 'management', label: '管理角色', roles: ['manager', 'hr', 'admin'] },
+  { key: 'management', label: '管理角色', roles: ['manager', 'aftersales_manager', 'regional_lead', 'hr', 'admin'] },
   { key: 'functional', label: '职能角色', roles: ['finance', 'asset_admin'] },
 ] as const
 const managerLevelOptions = [

@@ -6,7 +6,7 @@
  */
 
 const WEB_AUTH_KEYS = ['token', 'role', 'roles', 'is_superuser'] as const
-export const WEB_MANAGEMENT_ROLES = ['admin', 'hr', 'manager'] as const
+export const WEB_MANAGEMENT_ROLES = ['admin', 'hr', 'manager', 'regional_lead', 'aftersales_manager'] as const
 
 type WebAuthKey = typeof WEB_AUTH_KEYS[number]
 
@@ -103,7 +103,7 @@ export function hasWebManagementRoleSnapshot(): boolean {
 export function getWebManagementHomePath(roles: string[], isSuperuser: boolean): string {
   const roleSet = new Set(roles.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))
   if (isSuperuser || roleSet.has('admin') || roleSet.has('hr')) return '/dashboard'
-  if (roleSet.has('manager')) return '/dashboard'
+  if (roleSet.has('manager') || roleSet.has('regional_lead') || roleSet.has('aftersales_manager')) return '/dashboard'
   if (roleSet.has('asset_admin')) return '/fixed-assets'
   if (roleSet.has('finance')) return '/payroll'
   return '/login'

@@ -62,6 +62,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.services.map_settings import browser_map_key
+from app.services import field_roles
 from app.services.legal_holidays import LegalHolidayService, LegalHolidayYearOut, LegalHolidayYearUpdate
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_roles
@@ -138,6 +139,44 @@ router = APIRouter(
     dependencies=[Depends(get_current_user)],
 )
 logger = logging.getLogger(__name__)
+
+
+async def require_attendance_global_read(
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+) -> Employee:
+    """Global attendance reports are visible to field oversight and HR only."""
+    if not await field_roles.role_names(db, current_user) & {
+        "admin", "hr", "aftersales_manager", "regional_lead"
+    }:
+        raise HTTPException(status_code=403, detail="无权查看全员考勤")
+    return current_user
+
+
+async def can_read_all_attendance(db: AsyncSession, current_user: Employee) -> bool:
+    return bool(await field_roles.role_names(db, current_user) & {
+        "admin", "hr", "aftersales_manager", "regional_lead"
+    })
+
+
+async def attendance_employee_scope(db: AsyncSession, current_user: Employee):
+    """None means admin/HR all-company access; field overseers see field people."""
+    names = await field_roles.role_names(db, current_user)
+    if names & {"admin", "hr"}:
+        return None
+    if names & {"aftersales_manager", "regional_lead"}:
+        return field_roles.aftersales_person_ids()
+    raise HTTPException(status_code=403, detail="无权查看全员考勤")
+
+
+async def require_monthly_task_scope(db: AsyncSession, current_user: Employee, task: dict):
+    names = await field_roles.role_names(db, current_user)
+    if names & {"admin", "hr"}:
+        return
+    if not names & {"aftersales_manager", "regional_lead"}:
+        raise HTTPException(status_code=403, detail="无权查看月报任务")
+    if (task.get("query") or {}).get("scope", "all") != "aftersales":
+        raise HTTPException(status_code=403, detail="无权查看全员月报任务")
 
 
 def _parse_attendance_status_value(raw: str) -> AttendanceStatus:
@@ -2751,7 +2790,7 @@ async def list_rules(
     location_id: Optional[int] = Query(None, description="工作地点ID"),
     is_active: Optional[bool] = Query(None, description="是否启用"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     GET /attendance/rules — 获取考勤规则列表
@@ -2780,7 +2819,7 @@ async def list_rules(
 async def get_rule(
     rule_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     GET /attendance/rules/{rule_id} — 获取考勤规则详情
@@ -2845,6 +2884,63 @@ async def update_rule(
     return rule
 
 
+@router.get("/projects/{project_id}/rule", response_model=AttendanceRuleOut)
+async def get_project_rule(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    from app.services import field_service
+    from app.services.field_roles import require_project_read
+    await require_project_read(db, current_user, project_id)
+    site = await field_service.project_site(db, project_id)
+    if not site:
+        raise HTTPException(404, "项目尚未配置考勤规则")
+    rule = await AttendanceRuleService.get(db, site.rule_id)
+    if rule is None:
+        raise HTTPException(404, "项目考勤规则不存在")
+    return rule
+
+
+@router.put("/projects/{project_id}/rule", response_model=AttendanceRuleOut)
+async def update_project_rule(
+    project_id: int,
+    data: AttendanceRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """Version one project's rule without rewriting a shared rule used elsewhere."""
+    from app.schemas.field_service import SiteInput
+    from app.services import field_service
+    from app.services.field_roles import require_project_manage
+    from app.models.attendance import AttendanceRule
+    project = await require_project_manage(db, current_user, project_id)
+    site = await field_service.project_site(db, project_id)
+    if not site:
+        raise HTTPException(422, "请先配置项目打卡现场")
+    source = await db.get(AttendanceRule, site.rule_id)
+    if not source:
+        raise HTTPException(404, "考勤规则不存在")
+    # A new rule ID keeps other projects, historical shifts, and punched rule
+    # snapshots unchanged. Only this project's future unpunched shifts move.
+    copy_name = (data.name or f"{source.name}-{project.code}-项目版")[:100]
+    rule = await AttendanceRuleService.copy_rule(db, source.id, copy_name, current_user=current_user)
+    extra = {**(rule.extra_config or {}), **(data.extra_config or {}),
+             "scope_mode": "project", "project_id": project_id,
+             "assigned_employee_ids": []}
+    payload = data.model_dump(exclude_unset=True)
+    payload["extra_config"] = extra
+    payload["is_active"] = True
+    payload["name"] = copy_name
+    payload["location_id"] = site.location_id
+    rule = await AttendanceRuleService.update(db, rule.id,
+        AttendanceRuleUpdate.model_validate(payload), current_user=current_user)
+    await field_service.save_site(db, current_user,
+        SiteInput(project_id=project_id, name=site.name,
+                  address=site.address, rule_id=rule.id), site.id)
+    return rule
+
+
 @router.post("/rules/conflicts/check", response_model=list[AttendanceRuleConflictOut])
 async def check_rule_conflicts(
     data: AttendanceRuleUpdate,
@@ -2893,7 +2989,7 @@ async def copy_rule(
 async def list_rule_logs(
     rule_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     return await AttendanceRuleService.list_logs(db, rule_id)
 
@@ -2936,7 +3032,7 @@ async def delete_rule(
 async def create_shift(
     data: ShiftScheduleCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     POST /attendance/shifts — 创建单条排班
@@ -2946,7 +3042,7 @@ async def create_shift(
         单条创建适合临时调班场景；批量排班请使用 POST /shifts/batch。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
+        仅管理员和 HR 可创建传统排班；现场轮休排班走 /rotation 接口。
 
     请求体 (Body)：
         ShiftScheduleCreate，主要字段：
@@ -2968,7 +3064,7 @@ async def create_shift(
 async def batch_create_shifts(
     data: ShiftScheduleBatchCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     POST /attendance/shifts/batch — 批量创建排班
@@ -3016,7 +3112,8 @@ async def list_shifts(
         无需手动计算月份边界。
 
     权限：
-        需要登录（Depends(get_current_user)），无角色限制。
+        管理员和 HR 可查看全部；售后经理、区域组长仅查看售后项目排班；
+        项目组长仅查看本人及所负责项目，其他员工仅查看本人。
 
     查询参数 (Query)：
         - employee_id: int | None    按员工 ID 过滤
@@ -3055,12 +3152,39 @@ async def list_shifts(
         except (ValueError, IndexError):
             raise HTTPException(status_code=400, detail="month 参数格式无效, 应为 YYYY-MM (月份范围 01-12)")
 
+    from app.models.attendance import ShiftSchedule
+    from app.models.field_service import FieldAssignment, FieldAssignmentDay, FieldProject, FieldSite
+
+    names = await field_roles.role_names(db, current_user)
+    scope_filter = None
+    if names & {"admin", "hr"}:
+        pass
+    elif names & {"aftersales_manager", "regional_lead"}:
+        scope_filter = ShiftSchedule.id.in_(select(FieldAssignmentDay.shift_id))
+    else:
+        led_projects = select(FieldProject.id).where(FieldProject.manager_id == current_user.id)
+        leads_any = await db.scalar(led_projects.limit(1))
+        if leads_any is None:
+            if employee_id is not None and employee_id != current_user.id:
+                raise HTTPException(status_code=403, detail="只能查看本人排班")
+            if department_id is not None:
+                raise HTTPException(status_code=403, detail="无权按部门查看排班")
+            scope_filter = ShiftSchedule.employee_id == current_user.id
+        else:
+            led_shift_ids = (select(FieldAssignmentDay.shift_id)
+                .join(FieldAssignment, FieldAssignment.id == FieldAssignmentDay.assignment_id)
+                .join(FieldSite, FieldSite.id == FieldAssignment.site_id)
+                .where(FieldSite.project_id.in_(led_projects)))
+            scope_filter = or_(ShiftSchedule.employee_id == current_user.id,
+                               ShiftSchedule.id.in_(led_shift_ids))
+
     return await ShiftScheduleService.list_shifts(
         db,
         employee_id=employee_id,
         department_id=department_id,
         start_date=start_date,
         end_date=end_date,
+        scope_filter=scope_filter,
     )
 
 
@@ -3069,7 +3193,7 @@ async def update_shift(
     shift_id: int,
     data: ShiftScheduleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     PUT /attendance/shifts/{shift_id} — 更新排班记录
@@ -3104,7 +3228,7 @@ async def update_shift(
 async def delete_shift(
     shift_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     DELETE /attendance/shifts/{shift_id} — 删除排班记录
@@ -3137,7 +3261,7 @@ async def delete_shift(
 @router.get("/today-stats")
 async def get_today_stats(
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/today-stats — 今日考勤统计
@@ -3160,7 +3284,9 @@ async def get_today_stats(
     对应 Service：
         AttendanceRecordService.get_today_stats(db)
     """
-    stats = await AttendanceRecordService.get_today_stats(db)
+    stats = await AttendanceRecordService.get_today_stats(
+        db, employee_scope=await attendance_employee_scope(db, current_user)
+    )
     return stats
 
 
@@ -3178,11 +3304,7 @@ async def validate_clock(
     """
     employee_id = data.employee_id or current_user.id
     if employee_id != current_user.id:
-        can_validate = await AttendanceRecordService._has_any_role(
-            db,
-            current_user,
-            ("admin", "hr", "manager"),
-        )
+        can_validate = await can_read_all_attendance(db, current_user)
         if not can_validate:
             raise HTTPException(status_code=403, detail="无权校验其他员工考勤")
     return await AttendanceRecordService.validate_clock(db, employee_id, data)
@@ -3291,7 +3413,7 @@ async def get_punch_time_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/punch-time-records — 查询原始打卡时间记录。
@@ -3311,6 +3433,7 @@ async def get_punch_time_records(
             keyword=keyword,
             rule_id=rule_id,
             include_recent_left=include_recent_left,
+            employee_scope=await attendance_employee_scope(db, current_user),
             page=page,
             page_size=page_size,
         )
@@ -3327,7 +3450,7 @@ async def export_punch_time_records(
     rule_id: Optional[int] = Query(None, description="规则ID"),
     include_recent_left: bool = Query(True, description="是否包含离职90天内成员"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/punch-time-records/export — 导出原始打卡时间记录 Excel。
@@ -3344,6 +3467,7 @@ async def export_punch_time_records(
             keyword=keyword,
             rule_id=rule_id,
             include_recent_left=include_recent_left,
+            employee_scope=await attendance_employee_scope(db, current_user),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -3371,7 +3495,7 @@ async def get_daily_report(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/daily-report — 日报汇总在线查看
@@ -3393,6 +3517,7 @@ async def get_daily_report(
         status=status,
         rule_id=rule_id,
         include_recent_left=include_recent_left,
+        employee_scope=await attendance_employee_scope(db, current_user),
         page=page,
         page_size=page_size,
     )
@@ -3410,7 +3535,7 @@ async def export_daily_report(
     overview_columns: Optional[str] = Query(None, description="概况表导出列key，逗号分隔"),
     detail_columns: Optional[str] = Query(None, description="明细表导出列key，逗号分隔"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/daily-report/export — 导出日报汇总 Excel
@@ -3433,6 +3558,7 @@ async def export_daily_report(
         status=status,
         rule_id=rule_id,
         include_recent_left=include_recent_left,
+        employee_scope=await attendance_employee_scope(db, current_user),
         overview_columns=[part.strip() for part in str(overview_columns or "").split(",") if part.strip()] or None,
         detail_columns=[part.strip() for part in str(detail_columns or "").split(",") if part.strip()] or None,
     )
@@ -3456,7 +3582,7 @@ async def get_monthly_report(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/monthly-report — 月报汇总在线查看
@@ -3479,6 +3605,7 @@ async def get_monthly_report(
         status=status,
         rule_id=rule_id,
         include_recent_left=include_recent_left,
+        employee_scope=await attendance_employee_scope(db, current_user),
         page=page,
         page_size=page_size,
     )
@@ -3488,7 +3615,7 @@ async def get_monthly_report(
 async def create_monthly_report_task(
     data: MonthlyReportTaskCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     POST /attendance/monthly-report/tasks — 创建月报异步生成任务。
@@ -3512,6 +3639,7 @@ async def create_monthly_report_task(
         include_recent_left=data.include_recent_left,
         requested_by_id=getattr(current_user, "id", None),
         force_regenerate=data.force_regenerate,
+        scope="aftersales" if await attendance_employee_scope(db, current_user) is not None else "all",
     )
 
 
@@ -3519,11 +3647,12 @@ async def create_monthly_report_task(
 async def get_monthly_report_task(
     task_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     task = await AttendanceMonthlyReportTaskService.get_task(task_id, db)
     if task is None:
         raise HTTPException(status_code=404, detail="月报任务不存在或已过期")
+    await require_monthly_task_scope(db, current_user, task)
     return task
 
 
@@ -3533,11 +3662,12 @@ async def get_monthly_report_task_result(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     task = await AttendanceMonthlyReportTaskService.get_task(task_id, db)
     if task is None:
         raise HTTPException(status_code=404, detail="月报任务不存在或已过期")
+    await require_monthly_task_scope(db, current_user, task)
     if task["status"] == "failed":
         raise HTTPException(status_code=409, detail=task.get("error") or "月报任务生成失败")
     if task["status"] != "succeeded":
@@ -3559,7 +3689,7 @@ async def export_monthly_report_task_result(
     overview_columns: Optional[str] = Query(None, description="概况表导出列key，逗号分隔"),
     detail_columns: Optional[str] = Query(None, description="明细表基础列key，逗号分隔"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/monthly-report/tasks/{task_id}/export — 基于已生成任务导出月报。
@@ -3567,6 +3697,7 @@ async def export_monthly_report_task_result(
     task = await AttendanceMonthlyReportTaskService.get_task(task_id, db)
     if task is None:
         raise HTTPException(status_code=404, detail="月报任务不存在或已过期")
+    await require_monthly_task_scope(db, current_user, task)
     if task["status"] == "failed":
         raise HTTPException(status_code=409, detail=task.get("error") or "月报任务生成失败")
     if task["status"] != "succeeded":
@@ -3600,7 +3731,7 @@ async def export_wecom_monthly_report(
     detail_columns: Optional[str] = Query(None, description="明细表基础列key，逗号分隔"),
     task_id: Optional[str] = Query(None, description="已生成月报任务ID，传入后复用任务结果"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/monthly-report/export — 导出月报汇总 Excel
@@ -3618,6 +3749,10 @@ async def export_wecom_monthly_report(
     export_overview_columns = [part.strip() for part in str(overview_columns or "").split(",") if part.strip()] or None
     export_detail_columns = [part.strip() for part in str(detail_columns or "").split(",") if part.strip()] or None
     if task_id:
+        task = await AttendanceMonthlyReportTaskService.get_task(task_id, db)
+        if task is None:
+            raise HTTPException(status_code=404, detail="月报任务不存在或已过期")
+        await require_monthly_task_scope(db, current_user, task)
         data = await AttendanceMonthlyReportTaskService.export_result(
             task_id,
             overview_columns=export_overview_columns,
@@ -3638,6 +3773,7 @@ async def export_wecom_monthly_report(
             include_recent_left=include_recent_left,
             overview_columns=export_overview_columns,
             detail_columns=export_detail_columns,
+            employee_scope=await attendance_employee_scope(db, current_user),
         )
     filename = f"attendance_monthly_{target_start.strftime('%Y%m%d')}_{target_end.strftime('%Y%m%d')}.xlsx"
     return StreamingResponse(
@@ -3711,11 +3847,7 @@ async def query_records(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"无效的工时组: {work_hour_type}")
 
-    can_manage_all = await AttendanceRecordService._has_any_role(
-        db,
-        current_user,
-        ("admin", "hr", "manager"),
-    )
+    can_manage_all = await can_read_all_attendance(db, current_user)
     if not can_manage_all:
         if employee_id is not None and employee_id != current_user.id:
             raise HTTPException(status_code=403, detail="仅可查看自己的考勤记录")
@@ -3723,6 +3855,9 @@ async def query_records(
         department_id = None
         keyword = None
         parsed_wh = None
+    elif employee_id is not None and (await attendance_employee_scope(db, current_user)) is not None:
+        if not await field_roles.is_aftersales_person(db, employee_id):
+            raise HTTPException(status_code=403, detail="仅可查看售后人员考勤")
 
     params = AttendanceRecordQuery(
         employee_id=employee_id,
@@ -3737,7 +3872,10 @@ async def query_records(
         page=page,
         page_size=page_size,
     )
-    records, total = await AttendanceRecordService.query_records(db, params)
+    records, total = await AttendanceRecordService.query_records(
+        db, params,
+        employee_scope=await attendance_employee_scope(db, current_user) if can_manage_all else None,
+    )
     return PaginatedResponse(
         total=total,
         page=page,
@@ -3775,13 +3913,12 @@ async def get_record(
     record = await AttendanceRecordService.get_record(db, record_id)
     if record is None:
         raise HTTPException(status_code=404, detail="考勤记录不存在")
-    can_manage_all = await AttendanceRecordService._has_any_role(
-        db,
-        current_user,
-        ("admin", "hr", "manager"),
-    )
+    can_manage_all = await can_read_all_attendance(db, current_user)
     if not can_manage_all and record.employee_id != current_user.id:
         raise HTTPException(status_code=403, detail="仅可查看自己的考勤记录")
+    if can_manage_all and (await attendance_employee_scope(db, current_user)) is not None:
+        if not await field_roles.is_aftersales_person(db, record.employee_id):
+            raise HTTPException(status_code=403, detail="仅可查看售后人员考勤")
     return record
 
 
@@ -3802,7 +3939,7 @@ async def review_appeal(
     record_id: int,
     data: AttendanceAppealReview,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     record = await AttendanceRecordService.review_appeal(db, record_id, data)
     if record is None:
@@ -3851,8 +3988,10 @@ async def list_anomalies(
     对应 Service：
         AttendanceRecordService.list_anomalies(db, start_date, end_date, page, page_size)
     """
+    employee_id = None if await can_read_all_attendance(db, current_user) else current_user.id
     records, total = await AttendanceRecordService.list_anomalies(
-        db, start_date, end_date, page, page_size
+        db, start_date, end_date, page, page_size, employee_id=employee_id,
+        employee_scope=(await attendance_employee_scope(db, current_user)) if employee_id is None else None,
     )
     return PaginatedResponse(
         total=total,
@@ -3907,7 +4046,7 @@ async def request_correction(
 async def approve_correction(
     data: CorrectionApproval,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     POST /attendance/corrections/approve — 审批补卡申请（旧版流程）
@@ -3918,7 +4057,7 @@ async def approve_correction(
         审批拒绝则恢复原状态。
 
     权限：
-        需要 admin、hr 或 manager 角色之一（Depends(require_roles("admin", "hr", "manager"))）。
+        需要 admin、hr 或 manager 角色之一（Depends(require_roles("admin", "hr"))）。
         普通员工无权调用此接口。
 
     请求体 (Body)：
@@ -3971,13 +4110,12 @@ async def get_punch_correction_eligibility(
     if employee is None:
         raise HTTPException(status_code=404, detail="员工不存在")
 
-    can_manage_all = await AttendanceRecordService._has_any_role(
-        db,
-        current_user,
-        ("admin", "hr", "manager"),
-    )
+    can_manage_all = await can_read_all_attendance(db, current_user)
     if data.employee_id != current_user.id and not can_manage_all:
         raise HTTPException(status_code=403, detail="无权查询该员工补卡信息")
+    if data.employee_id != current_user.id and can_manage_all:
+        if (await attendance_employee_scope(db, current_user)) is not None and not await field_roles.is_aftersales_person(db, data.employee_id):
+            raise HTTPException(status_code=403, detail="仅可查看售后人员补卡信息")
 
     try:
         result = await PunchCorrectionEligibilityService.calculate(
@@ -4037,18 +4175,18 @@ async def list_punch_corrections(
     对应 Service：
         PunchCorrectionService.list_corrections(db, employee_id, status, skip, limit)
     """
-    can_manage_all = await AttendanceRecordService._has_any_role(
-        db,
-        current_user,
-        ("admin", "hr", "manager"),
-    )
+    can_manage_all = await can_read_all_attendance(db, current_user)
     if not can_manage_all:
         if employee_id is not None and employee_id != current_user.id:
             raise HTTPException(status_code=403, detail="仅可查看自己的补卡申请")
         employee_id = current_user.id
+    elif employee_id is not None and (await attendance_employee_scope(db, current_user)) is not None:
+        if not await field_roles.is_aftersales_person(db, employee_id):
+            raise HTTPException(status_code=403, detail="仅可查看售后人员补卡申请")
 
     items, total = await PunchCorrectionService.list_corrections(
-        db, employee_id=employee_id, status=correction_status, skip=skip, limit=limit
+        db, employee_id=employee_id, status=correction_status, skip=skip, limit=limit,
+        employee_scope=await attendance_employee_scope(db, current_user) if can_manage_all else None,
     )
     # 填充 employee_name
     out_items = []
@@ -4100,11 +4238,7 @@ async def create_punch_correction(
         PunchCorrectionService.create_correction(db, data)
     """
     _block_legacy_mvp_write(request, "补卡申请", "punch_correction")
-    can_manage_all = await AttendanceRecordService._has_any_role(
-        db,
-        current_user,
-        ("admin", "hr", "manager"),
-    )
+    can_manage_all = await field_roles.role_names(db, current_user) & {"admin", "hr"}
     if data.employee_id != current_user.id and not can_manage_all:
         raise HTTPException(status_code=403, detail="仅可为自己提交补卡申请")
 
@@ -4120,7 +4254,7 @@ async def review_punch_correction(
     correction_id: int,
     data: PunchCorrectionReview,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_roles("admin", "hr")),
 ):
     """
     POST /attendance/punch-corrections/{correction_id}/review — 审批补卡申请工单
@@ -4409,7 +4543,7 @@ async def list_summaries(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr", "manager")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/summaries — 分页查询月度汇总列表
@@ -4438,7 +4572,8 @@ async def list_summaries(
         MonthSummaryService.list_summaries(db, year, month, page, page_size)
     """
     summaries, total = await MonthSummaryService.list_summaries(
-        db, year, month, page, page_size
+        db, year, month, page, page_size,
+        employee_scope=await attendance_employee_scope(db, current_user),
     )
     return PaginatedResponse(
         total=total,
@@ -4453,7 +4588,7 @@ async def export_summaries(
     year: int = Query(..., ge=2020, le=2100, description="年份"),
     month: int = Query(..., ge=1, le=12, description="月份"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/summaries/export — 导出月度汇总数据
@@ -4486,7 +4621,8 @@ async def export_summaries(
     """
     # 获取该月所有汇总数据 (不分页)
     summaries, total = await MonthSummaryService.list_summaries(
-        db, year, month, page=1, page_size=9999
+        db, year, month, page=1, page_size=9999,
+        employee_scope=await attendance_employee_scope(db, current_user),
     )
     return {
         "year": year,
@@ -4529,13 +4665,12 @@ async def get_summary(
     对应 Service：
         MonthSummaryService.get_summary(db, employee_id, year, month)
     """
-    can_manage_all = await AttendanceRecordService._has_any_role(
-        db,
-        current_user,
-        ("admin", "hr", "manager"),
-    )
+    can_manage_all = await can_read_all_attendance(db, current_user)
     if not can_manage_all and employee_id != current_user.id:
         raise HTTPException(status_code=403, detail="仅可查看自己的汇总数据")
+    if can_manage_all and (await attendance_employee_scope(db, current_user)) is not None:
+        if not await field_roles.is_aftersales_person(db, employee_id):
+            raise HTTPException(status_code=403, detail="仅可查看售后人员汇总")
 
     summary = await MonthSummaryService.get_summary(db, employee_id, year, month)
     if summary is None:
@@ -4634,7 +4769,7 @@ async def export_monthly_report(
     month: int = Query(..., ge=1, le=12, description="月份"),
     department_id: Optional[int] = Query(None, description="部门ID（为空则导出全员）"),
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_roles("admin", "hr")),
+    current_user: Employee = Depends(require_attendance_global_read),
 ):
     """
     GET /attendance/export-monthly — 导出考勤月报 Excel 文件
@@ -4669,7 +4804,10 @@ async def export_monthly_report(
     """
     import io
 
-    data = await AttendanceReportService.export_monthly_report(db, year, month, department_id)
+    data = await AttendanceReportService.export_monthly_report(
+        db, year, month, department_id,
+        employee_scope=await attendance_employee_scope(db, current_user),
+    )
     filename = f"attendance_{year}{month:02d}.xlsx"
     return StreamingResponse(
         io.BytesIO(data),

@@ -101,6 +101,7 @@ from app.services.notification import NotificationService
 FLOW_MISSING_MESSAGE = "当前模板未配置审批流程，请联系 HR 或管理员"
 BUSINESS_TRIP_CODE = "business_trip"
 LEAVE_CODES = {"leave", "leave_request"}
+FIELD_ABSENCE_CODES = LEAVE_CODES | {BUSINESS_TRIP_CODE}
 PUNCH_CORRECTION_CODES = {"punch_correction", "attendance_punch_correction"}
 HEADCOUNT_REQUEST_CODES = {"headcount_request", "headcount_plan"}
 logger = logging.getLogger(__name__)
@@ -6536,6 +6537,84 @@ async def resolve_approver_id(
     return node.approver_id  # 兜底：返回节点配置的 approver_id
 
 
+async def _field_absence_flow_snapshot(
+    db: AsyncSession,
+    flow: ApprovalFlow,
+    applicant_id: int,
+) -> str:
+    """Route a field worker's leave/travel application to one manager decision."""
+    from app.models.employee import Employee
+    from app.models.employee_role import EmployeeRole
+    from app.services.field_roles import aftersales_manager_ids, role_names
+
+    applicant_is_manager = "aftersales_manager" in await role_names(db, applicant_id)
+    manager_ids = ([] if applicant_is_manager else
+                   [item for item in await aftersales_manager_ids(db) if item != applicant_id])
+    admin_role_ids = (await db.scalars(
+        select(EmployeeRole.employee_id)
+        .join(Employee, Employee.id == EmployeeRole.employee_id)
+        .where(EmployeeRole.role_name == "admin", EmployeeRole.is_active.is_(True),
+               Employee.is_active.is_(True))
+    )).all()
+    superuser_ids = (await db.scalars(
+        select(Employee.id).where(Employee.is_superuser.is_(True), Employee.is_active.is_(True))
+    )).all()
+    admin_ids = [item for item in _dedupe_positive_ids(list(admin_role_ids) + list(superuser_ids))
+                 if item != applicant_id]
+    recipients = _dedupe_positive_ids(manager_ids + admin_ids)
+    if not recipients:
+        raise HTTPException(status_code=409, detail="未配置售后经理或管理员，无法提交申请")
+    return json.dumps({
+        "flow_id": flow.id,
+        "flow_name": flow.name,
+        "module": flow.module,
+        "aftersales_single_approval": True,
+        "nodes": [{
+            "node_order": 1,
+            "node_name": "售后经理审批" if manager_ids else "管理员代审",
+            "node_type": "approval",
+            "approver_type": "specific_user",
+            "member_ids": recipients,
+            "condition_rules": {"assignee_source": "specific_user", "approval_mode": "or_sign"},
+        }],
+    }, ensure_ascii=False)
+
+
+async def _is_field_absence_instance(db: AsyncSession, instance: ApprovalInstance) -> bool:
+    if _instance_text(instance, "module") not in FIELD_ABSENCE_CODES:
+        return False
+    if not isinstance(db, AsyncSession) or not isinstance(instance, ApprovalInstance):
+        return False
+    from app.services.field_roles import is_aftersales_person
+
+    return await is_aftersales_person(db, instance.applicant_id)
+
+
+async def _ensure_field_absence_route(db: AsyncSession, instance: ApprovalInstance) -> None:
+    """Move an older pending field request off its former HR/manager approval chain."""
+    if not await _is_field_absence_instance(db, instance):
+        return
+    try:
+        snapshot = json.loads(instance.flow_snapshot or "{}")
+    except (TypeError, ValueError):
+        snapshot = {}
+    if snapshot.get("aftersales_single_approval"):
+        return
+    flow = await get_flow(db, instance.flow_id)
+    instance.flow_snapshot = await _field_absence_flow_snapshot(db, flow, instance.applicant_id)
+    instance.current_node_order = 1
+    for task in list(getattr(instance, "tasks", []) or []):
+        if task.status == "pending":
+            task.status = "completed"
+            task.completed_at = datetime.now(timezone.utc)
+    db.add(ApprovalRecord(instance_id=instance.id, node_order=0,
+                          approver_id=instance.applicant_id, action="route_adjusted",
+                          comment="现场申请改由售后经理统一审批",
+                          acted_at=datetime.now(timezone.utc)))
+    await db.flush()
+    await create_pending_task_for_instance(db, instance)
+
+
 async def create_instance(
     db: AsyncSession,
     data: ApprovalInstanceCreate,
@@ -6554,6 +6633,16 @@ async def create_instance(
     if approval_type is not None:
         await _ensure_template_submit_allowed(db, approval_type, applicant_id)
     flow = await _determine_flow(db, data.module)
+    field_absence = False
+    if data.module in FIELD_ABSENCE_CODES and isinstance(db, AsyncSession):
+        from app.services.field_roles import is_aftersales_person
+
+        field_absence = await is_aftersales_person(db, applicant_id)
+    flow_snapshot = (
+        await _field_absence_flow_snapshot(db, flow, applicant_id)
+        if field_absence
+        else await _build_flow_snapshot(db, flow, applicant_id, getattr(data, "form_data", None))
+    )
     instance = ApprovalInstance(
         flow_id=flow.id,
         module=data.module,
@@ -6562,13 +6651,23 @@ async def create_instance(
         summary=getattr(data, "summary", None) or flow.name,
         form_data=getattr(data, "form_data", None),
         applicant_id=applicant_id,
-        flow_snapshot=await _build_flow_snapshot(db, flow, applicant_id, getattr(data, "form_data", None)),
+        flow_snapshot=flow_snapshot,
         current_node_order=1,
         status="pending",
     )
     db.add(instance)
     await db.flush()
     await db.refresh(instance)
+    if field_absence:
+        from app.services.field_absence import capture_absence_days, form_date_range
+
+        form = getattr(instance, "form_data", None) or {}
+        day_range = form_date_range(form)
+        if day_range:
+            project_days = await capture_absence_days(
+                db, "approval_instance", instance.id, applicant_id, *day_range,
+            )
+            instance.form_data = {**form, "field_project_days": project_days}
 
     submit_record = ApprovalRecord(
         instance_id=instance.id,
@@ -6600,13 +6699,22 @@ async def maybe_create_approval_instance(
         flow = await _determine_flow(db, module)
     except HTTPException:
         return None
+    field_absence = False
+    if module in FIELD_ABSENCE_CODES and isinstance(db, AsyncSession):
+        from app.services.field_roles import is_aftersales_person
+
+        field_absence = await is_aftersales_person(db, applicant_id)
+    flow_snapshot = (
+        await _field_absence_flow_snapshot(db, flow, applicant_id)
+        if field_absence else await _build_flow_snapshot(db, flow, applicant_id)
+    )
     instance = ApprovalInstance(
         flow_id=flow.id,
         module=module,
         business_id=business_id,
         business_type=business_type,
         summary=flow.name,
-        flow_snapshot=await _build_flow_snapshot(db, flow, applicant_id),
+        flow_snapshot=flow_snapshot,
         applicant_id=applicant_id,
         current_node_order=1,
         status="pending",
@@ -6614,6 +6722,21 @@ async def maybe_create_approval_instance(
     db.add(instance)
     await db.flush()
     await db.refresh(instance)
+    if field_absence and module in LEAVE_CODES:
+        from app.models.leave import LeaveRequest
+        from app.services.field_absence import capture_absence_days
+
+        leave = await db.get(LeaveRequest, business_id)
+        if leave is not None:
+            project_days = await capture_absence_days(
+                db, "approval_instance", instance.id, applicant_id,
+                leave.start_date, leave.end_date,
+            )
+            instance.form_data = {
+                "start_date": leave.start_date.isoformat(),
+                "end_date": leave.end_date.isoformat(),
+                "field_project_days": project_days,
+            }
 
     submit_record = ApprovalRecord(
         instance_id=instance.id,
@@ -6813,6 +6936,44 @@ async def list_my_pending(
             continue
         seen_instance_ids.add(item_id)
         task_pending.append(item)
+    if isinstance(db, AsyncSession):
+        from app.services.field_roles import role_names
+
+        field_roles = await role_names(db, approver)
+        field_absence_stmt = _apply_approval_archive_filters(
+            select(ApprovalInstance)
+            .options(selectinload(ApprovalInstance.records), selectinload(ApprovalInstance.tasks))
+            .where(ApprovalInstance.status == "pending",
+                   ApprovalInstance.module.in_(FIELD_ABSENCE_CODES))
+            .order_by(ApprovalInstance.created_at.desc(), ApprovalInstance.id.desc()),
+            business_type=business_type,
+            start_date=start_date,
+            end_date=end_date,
+            applicant_id=applicant_id,
+            applicant_keyword=applicant_keyword,
+        )
+        field_absence_items = (await db.scalars(field_absence_stmt)).all()
+        eligible_ids = set()
+        for item in field_absence_items:
+            if not await _is_field_absence_instance(db, item):
+                continue
+            if item.applicant_id == approver_id:
+                continue
+            applicant_is_manager = "aftersales_manager" in await role_names(db, item.applicant_id)
+            if "admin" in field_roles or (
+                "aftersales_manager" in field_roles and not applicant_is_manager
+            ):
+                eligible_ids.add(item.id)
+                if item.id not in seen_instance_ids:
+                    task_pending.append(item)
+                    seen_instance_ids.add(item.id)
+        task_pending = [
+            item for item in task_pending
+            if item.module not in FIELD_ABSENCE_CODES
+            or not await _is_field_absence_instance(db, item)
+            or item.id in eligible_ids
+        ]
+        task_pending.sort(key=lambda item: (item.created_at, item.id), reverse=True)
     if task_pending:
         total = len(task_pending)
         return total, task_pending[skip: skip + limit]
@@ -6888,6 +7049,8 @@ async def list_my_pending(
 
     matching = []
     for inst in all_pending:
+        if await _is_field_absence_instance(db, inst):
+            continue
         current_node_pending_tasks = [
             task
             for task in list(getattr(inst, "tasks", []) or [])
@@ -7149,7 +7312,23 @@ async def _sync_business_status(
                 select(LeaveRequest).where(LeaveRequest.id == instance.business_id)
             )
             leave = leave_result.scalar_one_or_none()
-            if leave and hasattr(leave, 'approval_status'):
+            field_absence = bool(_snapshot_dict(getattr(instance, "flow_snapshot", None)).get("aftersales_single_approval"))
+            if leave and field_absence and leave.approval_status == LeaveApprovalStatus.pending:
+                from app.services.leave import LeaveRequestService
+
+                decision_record = await db.scalar(
+                    select(ApprovalRecord)
+                    .where(ApprovalRecord.instance_id == instance.id,
+                           ApprovalRecord.action.in_(["approve", "reject"]))
+                    .order_by(ApprovalRecord.id.desc()).limit(1)
+                )
+                if decision_record is None:
+                    raise HTTPException(status_code=409, detail="请假审批缺少决定记录")
+                await LeaveRequestService.approve(
+                    db, leave.id, decision_record.approver_id,
+                    result == "approved", decision_record.comment,
+                )
+            elif leave and hasattr(leave, 'approval_status'):
                 # 使用枚举值而非字符串，确保与 PostgreSQL ENUM 列类型匹配
                 leave.approval_status = LeaveApprovalStatus(result)
             elif leave and hasattr(leave, 'status'):
@@ -7210,6 +7389,8 @@ async def _sync_business_status(
         elif module == BUSINESS_TRIP_CODE and result == "approved":
             await _sync_business_trip_attendance(db, instance)
     except Exception as exc:
+        if module == "leave" and bool(_snapshot_dict(getattr(instance, "flow_snapshot", None)).get("aftersales_single_approval")):
+            raise
         import logging
         # 同步失败不阻断审批流程，只记录 WARNING 日志
         logging.getLogger(__name__).warning(
@@ -7322,6 +7503,19 @@ async def process_approval(
     if data.action == "transfer" and not data.transfer_to_id:
         raise HTTPException(status_code=400, detail="转审操作必须指定 transfer_to_id")
 
+    field_absence = await _is_field_absence_instance(db, instance)
+    if field_absence:
+        if data.action == "transfer":
+            raise HTTPException(status_code=403, detail="售后请假和出差只能由售后经理或管理员审批")
+        if approver_id == instance.applicant_id:
+            raise HTTPException(status_code=403, detail="申请人不能审批本人申请")
+        from app.services.field_roles import require_aftersales_approver, role_names
+
+        approver_role = await require_aftersales_approver(db, approver_id, data.comment)
+        if "aftersales_manager" in await role_names(db, instance.applicant_id) and approver_role != "admin":
+            raise HTTPException(status_code=403, detail="售后经理本人申请只能由管理员填写原因代审")
+        await _ensure_field_absence_route(db, instance)
+
     nodes = await _load_flow_snapshot_nodes(instance)
     if not nodes:
         flow = await get_flow(db, instance.flow_id)
@@ -7374,6 +7568,16 @@ async def process_approval(
         (task for task in pending_tasks if getattr(task, "approver_id", None) == approver_id),
         None,
     )
+    if pending_task is None and field_absence:
+        # A newly appointed manager or an administrator covering an absence may
+        # act on an older pending request without the former approver's task.
+        pending_task = ApprovalTask(instance_id=instance.id,
+                                    node_order=instance.current_node_order,
+                                    approver_id=approver_id, status="pending")
+        db.add(pending_task)
+        _append_task_to_instance(instance, pending_task)
+        pending_tasks.append(pending_task)
+        await db.flush()
     if pending_task is None:
         raise HTTPException(status_code=403, detail="当前用户不是该节点的待审批人")
 
@@ -7859,6 +8063,8 @@ async def transfer_approval(
     from app.models.employee import Employee
 
     instance = await get_instance(db, instance_id)
+    if await _is_field_absence_instance(db, instance):
+        raise HTTPException(status_code=403, detail="售后请假和出差审批不可转签")
     if instance.status != "pending":
         raise HTTPException(status_code=400, detail="该审批实例当前不可操作")
 

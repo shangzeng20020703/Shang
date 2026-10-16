@@ -307,7 +307,7 @@ const menuGroups = computed(() => [
     items: [
       { title: '个人档案', caption: '查看资料并维护联系方式', path: 'profile', icon: personCircleOutline, accent: '#0b63f6' },
       { title: '修改密码', caption: '更新移动端登录密码', path: 'security', icon: settingsOutline, accent: '#334155' },
-      { title: '考勤记录', caption: '打卡、异常与统计', path: '/app/attendance', icon: timeOutline, accent: '#0f766e' },
+      ...(!auth.roles.includes('regional_lead') && !auth.roles.includes('aftersales_manager') ? [{ title: '考勤记录', caption: '打卡、异常与统计', path: '/app/attendance', icon: timeOutline, accent: '#0f766e' }] : []),
       { title: '我发起的', caption: '已提交审批和处理进度', path: '/app/tabs/approvals?segment=submitted', icon: documentTextOutline, accent: '#1d4ed8' },
       { title: '抄送我的', caption: '流程知会和归档记录', path: '/app/tabs/approvals?segment=cc', icon: briefcaseOutline, accent: '#b45309' },
     ],

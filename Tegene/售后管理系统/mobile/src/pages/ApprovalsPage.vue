@@ -140,8 +140,9 @@
               </div>
               <footer class="approval-card__actions">
                 <template v-if="segment === 'pending'">
-                  <button type="button" class="approval-card__primary" @click.stop="processApproval(item.id, 'approve')">通过</button>
-                  <button type="button" class="approval-card__danger" @click.stop="processApproval(item.id, 'reject')">拒绝</button>
+                  <button v-if="auth.roles.includes('admin') || auth.roles.includes('hr')" type="button" class="approval-card__primary" @click.stop="openDetail(item.id)">查看审批详情</button>
+                  <template v-else><button type="button" class="approval-card__primary" @click.stop="processApproval(item.id, 'approve')">通过</button>
+                  <button type="button" class="approval-card__danger" @click.stop="processApproval(item.id, 'reject')">拒绝</button></template>
                 </template>
                 <button type="button" class="approval-card__link" @click.stop="openDetail(item.id)">查看详情</button>
               </footer>

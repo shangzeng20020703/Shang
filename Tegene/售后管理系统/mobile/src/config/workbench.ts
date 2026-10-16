@@ -34,7 +34,7 @@ export interface WorkbenchCatalogSection {
   items: WorkbenchCatalogItem[]
 }
 
-const allMobileRoles: AppRole[] = ['admin', 'employee', 'manager', 'hr']
+const allMobileRoles: AppRole[] = ['admin', 'employee', 'manager', 'regional_lead', 'aftersales_manager', 'hr']
 
 export const workbenchSections: WorkbenchCatalogSection[] = [
   {
@@ -42,10 +42,11 @@ export const workbenchSections: WorkbenchCatalogSection[] = [
     kicker: '高频',
     tone: 'management',
     items: [
-      { title: '打卡', caption: '上下班与外出', icon: locationSharp, path: '/app/attendance', accent: '#0f766e', roles: allMobileRoles, shortcutCategory: 'daily' },
+      { title: '打卡', caption: '上下班与外出', icon: locationSharp, path: '/app/attendance', accent: '#0f766e', roles: ['admin', 'employee', 'manager'], shortcutCategory: 'daily' },
       { title: '审批', caption: '发起售后与考勤流程', icon: fileTrayFullOutline, path: '/app/approval/start', accent: '#0b63f6', roles: allMobileRoles, shortcutCategory: 'approval' },
       { title: '我发起的', caption: '进度与记录', icon: documentTextOutline, path: '/app/tabs/approvals?segment=submitted', accent: '#1d4ed8', roles: allMobileRoles, shortcutCategory: 'approval' },
       { title: '我的项目', caption: '参与项目与打卡规则', icon: briefcaseOutline, path: '/app/field', accent: '#0369a1', roles: allMobileRoles, shortcutCategory: 'daily' },
+      { title: '现场轮休', caption: '排班、攒休与审批', icon: statsChartOutline, path: '/app/rotation', accent: '#2563eb', roles: allMobileRoles, shortcutCategory: 'daily' },
       { title: '请假', caption: '假期与申请', icon: fileTrayFullOutline, path: '/app/leave', accent: '#7c3aed', roles: allMobileRoles, shortcutCategory: 'approval' },
       { title: '通知', caption: '提醒与待办', icon: megaphoneOutline, path: '/app/notifications', accent: '#b45309', roles: allMobileRoles, shortcutCategory: 'daily' },
     ],
@@ -55,8 +56,8 @@ export const workbenchSections: WorkbenchCatalogSection[] = [
     kicker: '管理',
     tone: 'tools',
     items: [
-      { title: '团队花名册', caption: '员工与组织', icon: peopleOutline, path: '/app/people', accent: '#0369a1', roles: ['admin', 'hr', 'manager'], shortcutCategory: 'team' },
-      { title: '团队考勤', caption: '异常与统计', icon: statsChartOutline, path: '/app/team-attendance', accent: '#047857', roles: ['admin', 'hr', 'manager'], shortcutCategory: 'team' },
+      { title: '团队花名册', caption: '员工与组织', icon: peopleOutline, path: '/app/people', accent: '#0369a1', roles: ['admin', 'hr', 'regional_lead', 'aftersales_manager'], shortcutCategory: 'team' },
+      { title: '团队考勤', caption: '异常与统计', icon: statsChartOutline, path: '/app/team-attendance', accent: '#047857', roles: ['admin', 'hr', 'regional_lead', 'aftersales_manager'], shortcutCategory: 'team' },
     ],
   },
 ]
@@ -64,6 +65,13 @@ export const workbenchSections: WorkbenchCatalogSection[] = [
 export const workbenchItems: WorkbenchShortcutItem[] = workbenchSections
   .flatMap((section) => section.items)
 
-export function roleWorkbenchItems(roles: AppRole[]) {
-  return workbenchItems.filter((item) => item.roles.some((role) => roles.includes(role)))
+export function canAccessWorkbenchItem(item: WorkbenchCatalogItem, roles: AppRole[], isProjectLeader = false) {
+  if (item.path === '/app/people' || item.path === '/app/team-attendance') {
+    return isProjectLeader || item.roles.some((role) => roles.includes(role))
+  }
+  return item.roles.some((role) => roles.includes(role))
+}
+
+export function roleWorkbenchItems(roles: AppRole[], isProjectLeader = false) {
+  return workbenchItems.filter((item) => canAccessWorkbenchItem(item, roles, isProjectLeader))
 }

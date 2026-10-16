@@ -780,6 +780,7 @@ class ShiftScheduleService:
         department_id: Optional[int] = None,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
+        scope_filter: Any = None,
     ) -> Sequence[ShiftSchedule]:
         """
         灵活查询排班列表，支持按员工、部门和日期范围组合筛选。
@@ -798,6 +799,8 @@ class ShiftScheduleService:
             按日期、员工 ID 升序排列的 ShiftSchedule 列表
         """
         stmt = select(ShiftSchedule)
+        if scope_filter is not None:
+            stmt = stmt.where(scope_filter)
 
         # 如果指定了部门, 需要 JOIN Employee 表按部门过滤
         if department_id is not None:
@@ -900,7 +903,7 @@ class AttendanceRecordService:
     # 今日考勤统计
     # ------------------------------------------------------------------
     @staticmethod
-    async def get_today_stats(db: AsyncSession) -> Dict[str, int]:
+    async def get_today_stats(db: AsyncSession, employee_scope=None) -> Dict[str, int]:
         """
         获取今日全公司考勤统计数据，用于管理驾驶舱首页大盘展示。
 
@@ -920,9 +923,10 @@ class AttendanceRecordService:
         today = date.today()
 
         # 查询今日所有考勤记录
-        result = await db.execute(
-            select(AttendanceRecord).where(AttendanceRecord.date == today)
-        )
+        conditions = [AttendanceRecord.date == today]
+        if employee_scope is not None:
+            conditions.append(AttendanceRecord.employee_id.in_(employee_scope))
+        result = await db.execute(select(AttendanceRecord).where(*conditions))
         records = result.scalars().all()
 
         if not records:
@@ -4562,7 +4566,7 @@ class AttendanceRecordService:
     # ------------------------------------------------------------------
     @staticmethod
     async def query_records(
-        db: AsyncSession, params: AttendanceRecordQuery
+        db: AsyncSession, params: AttendanceRecordQuery, employee_scope=None
     ) -> Tuple[List[AttendanceRecord], int]:
         """
         分页查询考勤记录，支持按员工、日期范围和状态筛选。
@@ -4608,6 +4612,8 @@ class AttendanceRecordService:
             )
 
         conditions = []
+        if employee_scope is not None:
+            conditions.append(AttendanceRecord.employee_id.in_(employee_scope))
         if params.employee_id is not None:
             conditions.append(AttendanceRecord.employee_id == params.employee_id)
         if params.department_id is not None:
@@ -4789,6 +4795,8 @@ class AttendanceRecordService:
         end_date: Optional[date] = None,
         page: int = 1,
         page_size: int = 20,
+        employee_id: Optional[int] = None,
+        employee_scope=None,
     ) -> Tuple[List[AttendanceRecord], int]:
         """
         列出有异常的考勤记录（排除正常、出差、请假状态）。
@@ -4817,6 +4825,10 @@ class AttendanceRecordService:
             conditions.append(AttendanceRecord.date >= start_date)
         if end_date:
             conditions.append(AttendanceRecord.date <= end_date)
+        if employee_id is not None:
+            conditions.append(AttendanceRecord.employee_id == employee_id)
+        if employee_scope is not None:
+            conditions.append(AttendanceRecord.employee_id.in_(employee_scope))
 
         stmt = select(AttendanceRecord).where(and_(*conditions))
         count_stmt = select(func.count()).select_from(AttendanceRecord).where(and_(*conditions))
@@ -6737,6 +6749,7 @@ class MonthSummaryService:
         month: int,
         page: int = 1,
         page_size: int = 20,
+        employee_scope=None,
     ) -> Tuple[List[AttendanceMonthSummary], int]:
         """
         分页查询指定年月所有员工的考勤汇总列表。
@@ -6755,6 +6768,8 @@ class MonthSummaryService:
             AttendanceMonthSummary.year == year,
             AttendanceMonthSummary.month == month,
         ]
+        if employee_scope is not None:
+            conditions.append(AttendanceMonthSummary.employee_id.in_(employee_scope))
         count_result = await db.execute(
             select(func.count())
             .select_from(AttendanceMonthSummary)
@@ -6787,10 +6802,13 @@ class PunchCorrectionService:
         status: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
+        employee_scope=None,
     ) -> Tuple[List[PunchCorrectionRequest], int]:
         conditions = []
         if employee_id is not None:
             conditions.append(PunchCorrectionRequest.employee_id == employee_id)
+        if employee_scope is not None:
+            conditions.append(PunchCorrectionRequest.employee_id.in_(employee_scope))
         if status is not None:
             conditions.append(PunchCorrectionRequest.status == status)
 
@@ -7030,6 +7048,7 @@ class AttendancePunchTimeRecordService:
         include_recent_left: bool = True,
         page: Optional[int] = 1,
         page_size: Optional[int] = 20,
+        employee_scope=None,
     ) -> dict[str, Any]:
         AttendancePunchTimeRecordService.validate_month_window(start_date, end_date)
         punch_filters = AttendancePunchTimeRecordService._base_punch_filters(start_date, end_date)
@@ -7038,6 +7057,8 @@ class AttendancePunchTimeRecordService:
             keyword=keyword,
             include_recent_left=include_recent_left,
         )
+        if employee_scope is not None:
+            employee_filters.append(Employee.id.in_(employee_scope))
 
         id_stmt = (
             select(AttendancePunchTimeRecord.employee_id, func.min(Employee.name).label("employee_name"))
@@ -7143,6 +7164,7 @@ class AttendancePunchTimeRecordService:
         keyword: Optional[str] = None,
         rule_id: Optional[int] = None,
         include_recent_left: bool = True,
+        employee_scope=None,
     ) -> bytes:
         import openpyxl
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -7158,6 +7180,7 @@ class AttendancePunchTimeRecordService:
             include_recent_left=include_recent_left,
             page=None,
             page_size=None,
+            employee_scope=employee_scope,
         )
         columns = data["date_columns"]
         rows = data["items"]
@@ -7872,6 +7895,7 @@ class AttendanceReportService:
         include_recent_left: bool,
         page: Optional[int] = None,
         page_size: Optional[int] = None,
+        employee_scope=None,
     ) -> tuple[list[dict], list[dict], int]:
         status_filter = str(status or "").strip()
         status = None
@@ -7901,6 +7925,9 @@ class AttendanceReportService:
                 )
             )
         )
+        if employee_scope is not None:
+            stmt = stmt.where(AttendanceRecord.employee_id.in_(employee_scope))
+            count_stmt = count_stmt.where(AttendanceRecord.employee_id.in_(employee_scope))
 
         if rule_id is not None:
             stmt = stmt.join(
@@ -8500,6 +8527,7 @@ class AttendanceReportService:
         include_recent_left: bool = True,
         page: int = 1,
         page_size: int = 20,
+        employee_scope=None,
     ) -> dict:
         overview_rows, detail_rows, total = await AttendanceReportService._load_daily_rows(
             db,
@@ -8512,6 +8540,7 @@ class AttendanceReportService:
             include_recent_left=include_recent_left,
             page=page,
             page_size=page_size,
+            employee_scope=employee_scope,
         )
         return {
             "start_date": start_date.isoformat(),
@@ -8538,6 +8567,7 @@ class AttendanceReportService:
         include_recent_left: bool = True,
         overview_columns: Optional[list[str]] = None,
         detail_columns: Optional[list[str]] = None,
+        employee_scope=None,
     ) -> bytes:
         import openpyxl
 
@@ -8552,6 +8582,7 @@ class AttendanceReportService:
             include_recent_left=include_recent_left,
             page=None,
             page_size=None,
+            employee_scope=employee_scope,
         )
 
         wb = openpyxl.Workbook()
@@ -9227,6 +9258,7 @@ class AttendanceReportService:
         include_recent_left: bool,
         page: Optional[int] = None,
         page_size: Optional[int] = None,
+        employee_scope=None,
     ) -> tuple[list[dict], list[dict], int, list[dict[str, str]]]:
         employee_conditions = [
             Employee.status.in_(
@@ -9235,6 +9267,8 @@ class AttendanceReportService:
                 else [EmployeeStatus.ACTIVE, EmployeeStatus.ON_PROBATION]
             )
         ]
+        if employee_scope is not None:
+            employee_conditions.append(Employee.id.in_(employee_scope))
         if department_id is not None:
             employee_conditions.append(Employee.department_id == department_id)
         if keyword:
@@ -9714,6 +9748,7 @@ class AttendanceReportService:
         include_recent_left: bool = True,
         page: int = 1,
         page_size: int = 20,
+        employee_scope=None,
     ) -> dict:
         overview_rows, detail_rows, total, day_columns = await AttendanceReportService._load_monthly_report_rows(
             db,
@@ -9726,6 +9761,7 @@ class AttendanceReportService:
             include_recent_left=include_recent_left,
             page=page,
             page_size=page_size,
+            employee_scope=employee_scope,
         )
         return {
             "start_date": start_date.isoformat(),
@@ -9837,6 +9873,7 @@ class AttendanceReportService:
         include_recent_left: bool = True,
         overview_columns: Optional[list[str]] = None,
         detail_columns: Optional[list[str]] = None,
+        employee_scope=None,
     ) -> bytes:
         overview_rows, detail_rows, total, day_columns = await AttendanceReportService._load_monthly_report_rows(
             db,
@@ -9849,6 +9886,7 @@ class AttendanceReportService:
             include_recent_left=include_recent_left,
             page=None,
             page_size=None,
+            employee_scope=employee_scope,
         )
         result = AttendanceReportService._monthly_report_result_payload(
             start_date=start_date,
@@ -9872,6 +9910,7 @@ class AttendanceReportService:
         year: int,
         month: int,
         department_id: Optional[int] = None,
+        employee_scope=None,
     ) -> bytes:
         """
         生成考勤月报 Excel 文件，返回文件二进制内容。
@@ -9912,6 +9951,8 @@ class AttendanceReportService:
             AttendanceRecord.date >= first_day,
             AttendanceRecord.date <= last_day,
         ]
+        if employee_scope is not None:
+            conditions.append(AttendanceRecord.employee_id.in_(employee_scope))
         result = await db.execute(
             select(AttendanceRecord).where(and_(*conditions))
         )
@@ -9921,6 +9962,8 @@ class AttendanceReportService:
         emp_conditions = []
         if department_id is not None:
             emp_conditions.append(Employee.department_id == department_id)
+        if employee_scope is not None:
+            emp_conditions.append(Employee.id.in_(employee_scope))
         emp_result = await db.execute(
             select(Employee).where(and_(*emp_conditions)) if emp_conditions else select(Employee)
         )
@@ -10091,6 +10134,7 @@ class AttendanceMonthlyReportTaskService:
         status: Optional[str] = None,
         rule_id: Optional[int] = None,
         include_recent_left: bool = True,
+        scope: str = "all",
     ) -> dict[str, Any]:
         return {
             "start_date": start_date.isoformat(),
@@ -10100,6 +10144,7 @@ class AttendanceMonthlyReportTaskService:
             "status": str(status or "").strip() or None,
             "rule_id": int(rule_id) if rule_id is not None else None,
             "include_recent_left": bool(include_recent_left),
+            "scope": scope,
         }
 
     @classmethod
@@ -10206,6 +10251,7 @@ class AttendanceMonthlyReportTaskService:
         include_recent_left: bool = True,
         requested_by_id: Optional[int] = None,
         force_regenerate: bool = False,
+        scope: str = "all",
     ) -> dict[str, Any]:
         query = cls.normalize_query(
             start_date=start_date,
@@ -10215,6 +10261,7 @@ class AttendanceMonthlyReportTaskService:
             status=status,
             rule_id=rule_id,
             include_recent_left=include_recent_left,
+            scope=scope,
         )
         cache_key = cls.cache_key(query)
 
@@ -10372,6 +10419,8 @@ class AttendanceMonthlyReportTaskService:
     async def _generate_result(cls, db: AsyncSession, query: dict[str, Any]) -> dict[str, Any]:
         start_date = date.fromisoformat(str(query["start_date"]))
         end_date = date.fromisoformat(str(query["end_date"]))
+        from app.services.field_roles import aftersales_person_ids
+        employee_scope = aftersales_person_ids() if query.get("scope") == "aftersales" else None
         overview_rows, detail_rows, total, day_columns = await AttendanceReportService._load_monthly_report_rows(
             db,
             start_date=start_date,
@@ -10381,6 +10430,7 @@ class AttendanceMonthlyReportTaskService:
             status=query.get("status"),
             rule_id=query.get("rule_id"),
             include_recent_left=bool(query.get("include_recent_left", True)),
+            employee_scope=employee_scope,
             page=None,
             page_size=None,
         )

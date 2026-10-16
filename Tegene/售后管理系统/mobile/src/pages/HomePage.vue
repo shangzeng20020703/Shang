@@ -57,7 +57,7 @@
           </div>
         </section>
 
-        <section class="home-attendance-card section-block" aria-label="今日打卡">
+        <section v-if="canPunch" class="home-attendance-card section-block" aria-label="今日打卡">
           <div class="home-card-head">
             <div>
               <span class="home-section-kicker">今日打卡</span>
@@ -257,6 +257,7 @@ import { useMobileInbox } from '@/composables/useMobileInbox'
 
 const auth = useAuthStore()
 const router = useRouter()
+const isProjectLeader = ref(false)
 const shortcutEditing = ref(false)
 const shortcutPaths = ref<string[]>([])
 const draggingShortcutPath = ref('')
@@ -298,6 +299,7 @@ const attendanceSummary = reactive({
 })
 
 const roleLabel = computed(() => roleLabels[auth.displayRole])
+const canPunch = computed(() => !auth.roles.includes('regional_lead') && !auth.roles.includes('aftersales_manager'))
 const avatarText = computed(() => {
   const name = String(auth.user?.name || '').trim()
   return name ? name.slice(-2) : 'HR'
@@ -430,16 +432,24 @@ function toShortcutAction(item: WorkbenchItem): ShortcutAction {
 }
 
 const serviceActions = computed<ShortcutAction[]>(() => {
-  return roleWorkbench(auth.roles).map(toShortcutAction)
+  return roleWorkbench(auth.roles, isProjectLeader.value).map(toShortcutAction)
 })
 
 const shortcutStorageKey = computed(() => `aftersales_home_shortcuts_${auth.user?.id || 'guest'}`)
 const defaultShortcutPaths = computed(() => {
-  const preferred = [
+  const preferred = isProjectLeader.value ? [
+    '/app/attendance',
+    '/app/field',
+    '/app/rotation',
+    '/app/people',
+    '/app/team-attendance',
+    '/app/approval/start',
+  ] : [
     '/app/attendance',
     '/app/approval/start',
     '/app/tabs/approvals?segment=submitted',
     '/app/field',
+    '/app/rotation',
     '/app/leave',
     '/app/notifications',
   ]
@@ -784,6 +794,8 @@ async function loadCriticalHomeData() {
   ])
 
   const [balance, payslips, assets, leaveTypes, monthlyDashboard] = requests
+  isProjectLeader.value = assets.status === 'fulfilled' && Array.isArray(assets.value?.projects)
+    && assets.value.projects.some((project: any) => project.manager_id === auth.user?.id)
   const balanceRows = balance.status === 'fulfilled' && Array.isArray(balance.value) ? balance.value : []
   const leaveTypeRows = leaveTypes.status === 'fulfilled' && Array.isArray(leaveTypes.value) ? leaveTypes.value : []
   homeSummary.annualLeaveBalanceText = formatTypedLeaveBalance(balanceRows, leaveTypeRows, isAnnualLeaveBalance)
@@ -793,7 +805,7 @@ async function loadCriticalHomeData() {
   applyMonthlyAbnormalDashboard(monthlyDashboard.status === 'fulfilled' ? monthlyDashboard.value : null)
   await inbox.loadInboxCounts()
   homeSummary.pendingApprovals = inbox.approvalDisplayCount.value
-  await loadAttendanceHomeData()
+  if (canPunch.value) await loadAttendanceHomeData()
 }
 
 function formatClockOnly(value?: string | null) {

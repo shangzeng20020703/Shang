@@ -2,21 +2,21 @@
   <div v-loading="loading">
     <div class="page-intro">
       <div><h1>项目库</h1><p>选项目，配置人员与规则，员工按项目打卡。</p></div>
-      <div><el-button v-if="data.can_manage" @click="router.push('/attendance?tab=rules')">配置考勤规则</el-button><el-button :loading="sourceLoading" @click="refresh">刷新项目</el-button></div>
+      <div><el-button v-if="canManageGlobalRules" @click="router.push('/attendance?tab=rules')">配置考勤规则</el-button><el-button :loading="sourceLoading" @click="refresh">刷新项目</el-button></div>
     </div>
-    <div class="workflow"><span><b>1</b>选择项目</span><span><b>2</b>负责人配置人员与规则</span><span><b>3</b>员工自动匹配考勤</span></div>
+    <div class="workflow"><span><b>1</b>选择项目</span><span><b>2</b>区域组长配置人员与规则</span><span><b>3</b>员工自动匹配考勤</span></div>
     <el-alert v-if="error || sourceError" :title="error || sourceError" type="error" :closable="false" show-icon class="notice"/>
-    <el-alert v-if="data.can_manage && sourceConfigured === false" title="项目来源尚未连接，请联系管理员配置 Tegene 读取凭据。" type="info" :closable="false" class="notice"/>
+    <el-alert v-if="canManageGlobalRules && sourceConfigured === false" title="项目来源尚未连接，请联系管理员配置 Tegene 读取凭据。" type="info" :closable="false" class="notice"/>
     <section class="surface">
       <div class="field-toolbar">
-        <el-input v-model="query" placeholder="搜索项目名称、编号、负责人" clearable style="max-width:340px"/>
+        <el-input v-model="query" placeholder="搜索项目名称、编号、项目组长" clearable style="max-width:340px"/>
         <el-select v-model="stage" aria-label="配置状态" style="width:155px"><el-option label="全部项目" value="all"/><el-option label="已配置规则" value="ready"/><el-option label="待配置规则" value="pending"/></el-select>
         <span class="list-count">共 {{rows.length}} 个项目</span>
       </div>
       <el-table :data="pagedRows" class="field-table" empty-text="暂无匹配项目" @row-click="openProject">
         <el-table-column prop="code" label="项目编号" width="140"/>
         <el-table-column prop="name" label="项目名称" min-width="260"/>
-        <el-table-column label="负责人" width="120"><template #default="{row}">{{row.manager_name || '待指定'}}</template></el-table-column>
+        <el-table-column label="项目组长" width="120"><template #default="{row}">{{row.manager_name || '待指定'}}</template></el-table-column>
         <el-table-column label="考勤规则" min-width="180"><template #default="{row}"><span v-if="row.rule_name">{{row.rule_name}}</span><el-tag v-else type="info">待配置</el-tag></template></el-table-column>
         <el-table-column label="参与人员" width="100"><template #default="{row}">{{row.member_count || 0}} 人</template></el-table-column>
         <el-table-column label="操作" width="115" fixed="right"><template #default="{row}"><el-button link type="primary" @click.stop="openProject(row)">{{canManage(row) ? '配置项目' : '查看项目'}}</el-button></template></el-table-column>
@@ -24,17 +24,24 @@
       <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="rows.length" layout="prev, pager, next" class="pagination"/>
       <p class="muted">每页 50 行。项目资料来自 Tegene；考勤规则统一在「考勤管理 → 考勤规则」中配置，项目直接选用。</p>
     </section>
+    <section v-if="transferRequests.length" class="surface transfer-list">
+      <h3>跨项目交接申请</h3>
+      <el-table :data="transferRequests" empty-text="暂无待处理交接">
+        <el-table-column prop="employee_name" label="人员" width="120"/><el-table-column prop="from_project_name" label="原项目"/><el-table-column prop="to_project_name" label="目标项目"/><el-table-column prop="effective_date" label="生效日期" width="125"/><el-table-column prop="status" label="状态" width="120"/>
+        <el-table-column label="操作" width="150"><template #default="{row}"><template v-if="row.can_review && row.status==='pending'"><el-button link type="primary" @click="reviewTransfer(row,true)">确认交接</el-button><el-button link type="danger" @click="reviewTransfer(row,false)">驳回</el-button></template></template></el-table-column>
+      </el-table>
+    </section>
 
     <el-drawer v-model="visible" :title="canManage(selected) ? '项目配置' : '项目详情'" size="min(860px, 96vw)" :close-on-click-modal="!saving">
       <template v-if="selected">
         <div class="project-heading"><span class="muted">{{selected.code}}</span><h2>{{selected.name}}</h2></div>
         <el-alert v-if="formError" :title="formError" type="error" :closable="false" show-icon class="notice"/>
         <section class="config-section">
-          <h3>负责人 · 考勤规则</h3>
+          <h3>项目组长 · 考勤规则</h3>
           <el-form label-position="top">
             <div class="config-grid">
-              <el-form-item label="项目负责人">
-                <el-select v-model="config.manager_id" filterable placeholder="指定负责人" :disabled="!data.can_manage || saving">
+              <el-form-item label="项目组长（每项目一位）">
+                <el-select v-model="config.manager_id" filterable placeholder="指定项目组长" :disabled="!canManage(selected) || saving">
                   <el-option v-for="p in managers" :key="p.id" :label="`${p.name} · ${p.employee_no}`" :value="p.id" :disabled="!p.is_active"/>
                 </el-select>
               </el-form-item>
@@ -45,9 +52,20 @@
               </el-form-item>
             </div>
             <p v-if="chosenRule" class="rule-summary">{{ruleSummary(chosenRule)}}</p>
-            <p class="muted">此处只关联已有规则，无需重复录入时间、定位或照片要求。<el-button v-if="data.can_manage" link type="primary" @click="router.push('/attendance?tab=rules')">前往考勤规则配置</el-button></p>
+            <p class="muted">此处关联项目打卡规则。修改当前项目的工时、定位和拍照要求时会生成项目专用版本。<el-button v-if="canManage(selected)&&selected.id&&selected.rule_id" link type="primary" @click="router.push({path:'/attendance',query:{tab:'rules',project_id:selected.id}})">编辑本项目规则</el-button><el-button v-else-if="canManageGlobalRules" link type="primary" @click="router.push('/attendance?tab=rules')">前往考勤规则配置</el-button></p>
             <p v-if="canManage(selected)" class="muted">已打卡的分段保留原规则；新的项目分段使用当前规则。</p>
             <el-button v-if="canManage(selected)" type="primary" :loading="saving" :disabled="!config.manager_id" @click="saveConfig">保存配置</el-button>
+          </el-form>
+        </section>
+        <section class="config-section">
+          <h3>区域组长负责范围</h3>
+          <p class="muted">区域组长可以查看所有项目；只有被售后经理分配为主责或协管的项目可以修改。每个项目设置一位主责，可设置多位协管。</p>
+          <el-form label-position="top">
+            <div class="config-grid">
+              <el-form-item label="主责区域组长"><el-select v-model="regionalForm.primary_lead_id" clearable filterable placeholder="选择主责" :disabled="!data.can_assign_regionals || saving"><el-option v-for="p in regionalLeads" :key="p.id" :label="p.name" :value="p.id" /></el-select></el-form-item>
+              <el-form-item label="协管区域组长"><el-select v-model="regionalForm.assistant_lead_ids" multiple filterable placeholder="选择协管" :disabled="!data.can_assign_regionals || saving"><el-option v-for="p in regionalLeads" :key="p.id" :label="p.name" :value="p.id" :disabled="p.id===regionalForm.primary_lead_id" /></el-select></el-form-item>
+            </div>
+            <template v-if="data.can_assign_regionals"><el-form-item label="分配原因"><el-input v-model="regionalForm.reason" maxlength="500" placeholder="填写本次分配或调整原因" /></el-form-item><el-button type="primary" :loading="saving" :disabled="!selected.id" @click="saveRegionalLeads">保存区域分配</el-button></template>
           </el-form>
         </section>
         <section class="config-section">
@@ -72,9 +90,11 @@
     <el-dialog v-model="transferVisible" title="调动人员" width="480px" :close-on-click-modal="!saving">
       <p>{{transferPerson?.employee_name}} · {{selected?.name}}</p>
       <el-select v-model="transferProject" filterable placeholder="选择目标项目" style="width:100%"><el-option v-for="p in transferTargets" :key="p.id" :value="p.id" :label="p.name" /></el-select>
-      <p class="muted">调动立即生效；原项目打卡保留，新打卡使用目标项目规则。</p>
+      <el-date-picker v-model="transferDate" type="date" value-format="YYYY-MM-DD" :disabled-date="(date:Date)=>date.getTime()<new Date(today+'T00:00:00').getTime()" style="width:100%;margin-top:12px" />
+      <el-input v-model="transferReason" maxlength="500" type="textarea" placeholder="填写交接原因" style="margin-top:12px" />
+      <p class="muted">按选定日期申请交接；跨区域项目由原项目和目标项目的区域组长分别确认，生效前原项目记录保留。</p>
       <el-alert v-if="formError" :title="formError" type="error" :closable="false" />
-      <template #footer><el-button @click="transferVisible=false">取消</el-button><el-button type="primary" :disabled="!transferProject" :loading="saving" @click="transferMember">确认调动</el-button></template>
+      <template #footer><el-button @click="transferVisible=false">取消</el-button><el-button type="primary" :disabled="!transferProject || !transferDate || !transferReason.trim()" :loading="saving" @click="transferMember">提交交接申请</el-button></template>
     </el-dialog>
     <el-dialog v-model="importVisible" title="导入项目人员" width="min(760px,94vw)" :close-on-click-modal="!saving">
       <p>按姓名、手机号匹配已有花名册人员。</p>
@@ -90,15 +110,19 @@ import {ref, computed, onMounted, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import {get, post, put} from '@/utils/request'
 import {ElMessage, ElMessageBox} from 'element-plus'
+import {getWebAuthRoles,isWebAuthSuperuser} from '@/utils/authSession'
 const router = useRouter()
 const PAGE_SIZE = 50
-const data = ref<any>({projects:[], assignments:[], people:[], rules:[], managed_project_ids:[]})
+const data = ref<any>({projects:[], assignments:[], people:[], rules:[], managed_project_ids:[],regional_assignments:[],can_assign_regionals:false})
 const loading=ref(false), saving=ref(false), error=ref(''), sourceError=ref(''), sourceLoading=ref(false), sourceConfigured=ref<boolean|null>(null)
 const sourceProjects=ref<any[]>([]), query=ref(''), stage=ref('all'), page=ref(1), visible=ref(false), selected=ref<any>(null), formError=ref(''), showHistory=ref(false)
 const config=ref<any>({manager_id:undefined, rule_id:undefined})
+const regionalForm=ref<{primary_lead_id:number|undefined,assistant_lead_ids:number[],reason:string}>({primary_lead_id:undefined,assistant_lead_ids:[],reason:''})
+const regionalPeople=ref<any[]>([])
+const transferRequests=ref<any[]>([])
 const memberForm=ref<{employee_ids:number[]}>({employee_ids:[]})
-const transferVisible=ref(false), transferPerson=ref<any>(null), transferProject=ref<number>(), importVisible=ref(false), memberFile=ref<File|null>(null), importReport=ref<any>(null)
-const transferTargets=computed(()=>data.value.projects.filter((p:any)=>p.id!==selected.value?.id && p.rule_id && canManage(p)))
+const transferVisible=ref(false), transferPerson=ref<any>(null), transferProject=ref<number>(), transferDate=ref(''), transferReason=ref(''), importVisible=ref(false), memberFile=ref<File|null>(null), importReport=ref<any>(null)
+const transferTargets=computed(()=>data.value.projects.filter((p:any)=>p.id!==selected.value?.id && p.rule_id && p.is_active!==false))
 const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 const upstreamConfig={timeout:30000,skipErrorReport:true,skipDefaultErrorHandler:true}
 const catalog=computed(()=>{
@@ -108,25 +132,41 @@ const catalog=computed(()=>{
 const rows=computed(()=>catalog.value.filter((p:any)=>(stage.value==='all' || (stage.value==='ready' ? !!p.rule_id : !p.rule_id)) && [p.name,p.code,p.manager_name].join(' ').toLowerCase().includes(query.value.trim().toLowerCase())))
 const pagedRows=computed(()=>rows.value.slice((page.value-1)*PAGE_SIZE,page.value*PAGE_SIZE))
 const localProject=computed(()=>data.value.projects.find((p:any)=>p.id===selected.value?.id))
+const canManageGlobalRules=computed(()=>isWebAuthSuperuser()||getWebAuthRoles().some(r=>['admin','hr'].includes(r)))
+const regionalLeads=computed(()=>{
+  const assigned=new Set([regionalForm.value.primary_lead_id,...regionalForm.value.assistant_lead_ids])
+  return regionalPeople.value.filter((p:any)=>p.is_active!==false && (p.role==='regional_lead' || assigned.has(p.id)))
+})
 const members=computed(()=>data.value.assignments.filter((a:any)=>a.project_id===selected.value?.id && (showHistory.value || a.is_current)))
 const managers=computed(()=>{
-  const people=data.value.people.filter((p:any)=>p.can_be_manager || p.id===config.value.manager_id)
+  const people=data.value.people.filter((p:any)=>p.is_active!==false || p.id===config.value.manager_id)
   if(config.value.manager_id && !people.some((p:any)=>p.id===config.value.manager_id)) people.push({id:config.value.manager_id,name:localProject.value?.manager_name || '原负责人',employee_no:'已停用',is_active:false})
   return people
 })
 const chosenRule=computed(()=>data.value.rules.find((r:any)=>r.id===config.value.rule_id))
 const configDirty=computed(()=>config.value.manager_id!==localProject.value?.manager_id || config.value.rule_id!==localProject.value?.rule_id)
-function canManage(p:any){return p && p.is_active!==false && (data.value.can_manage || data.value.managed_project_ids.includes(p.id))}
+function canManage(p:any){return p && p.is_active!==false && (p.can_manage ?? (data.value.can_manage || data.value.managed_project_ids.includes(p.id)))}
 function memberState(a:any){return a.is_current?'参与中':a.start_date>today && a.status==='active'?'待参与':'已结束'}
 function formatTime(value:string){return value?new Date(/[Zz]|[+-]\d\d:\d\d$/.test(value)?value:value+'Z').toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'}
 function ruleSummary(r:any){const methods=[r.require_gps?'GPS 定位':'',r.require_wifi?'Wi-Fi':''].filter(Boolean);return [(r.clock_in_time&&r.clock_out_time)?`${r.clock_in_time.slice(0,5)} — ${r.clock_out_time.slice(0,5)}`:'按规则时段打卡', methods.length?methods.join(['all','both'].includes(r.check_method_mode)?' + ':' / '):'无需定位或 Wi-Fi 校验',r.require_photo?'需要照片':''].filter(Boolean).join(' · ')}
 function message(e:any){return typeof e.response?.data?.detail==='string'?e.response.data.detail:'操作失败，请检查必填项后重试'}
-async function loadLocal(){data.value=await get('/field/directory')}
+async function loadLocal(){
+  data.value=await get('/field/directory')
+  if(data.value.can_assign_regionals){try{regionalPeople.value=await get('/field/people')}catch{regionalPeople.value=[]}}
+  try{transferRequests.value=await get('/field/transfer-requests')}catch{transferRequests.value=[]}
+}
 async function refresh(){
   loading.value=true;error.value='';sourceError.value=''
-  try{await loadLocal();if(data.value.can_manage){sourceLoading.value=true;try{const result=await get('/field/tegene/projects',undefined,upstreamConfig);sourceProjects.value=result.projects;sourceConfigured.value=result.configured}catch(e){sourceProjects.value=[];sourceError.value=message(e)+'；已配置的项目仍可使用。'}finally{sourceLoading.value=false}}}catch(e){error.value=message(e)}finally{loading.value=false}
+  try{await loadLocal();if(canManageGlobalRules.value){sourceLoading.value=true;try{const result=await get('/field/tegene/projects',undefined,upstreamConfig);sourceProjects.value=result.projects;sourceConfigured.value=result.configured}catch(e){sourceProjects.value=[];sourceError.value=message(e)+'；已配置的项目仍可使用。'}finally{sourceLoading.value=false}}}catch(e){error.value=message(e)}finally{loading.value=false}
 }
-function openProject(row:any){selected.value=row;config.value={manager_id:row.manager_id,rule_id:row.rule_id};memberForm.value={employee_ids:[]};showHistory.value=false;formError.value='';visible.value=true}
+function openProject(row:any){selected.value=row;config.value={manager_id:row.manager_id,rule_id:row.rule_id};regionalForm.value={primary_lead_id:row.primary_regional_lead_id||undefined,assistant_lead_ids:[...(row.assistant_regional_lead_ids||[])],reason:''};memberForm.value={employee_ids:[]};showHistory.value=false;formError.value='';visible.value=true}
+async function saveRegionalLeads(){
+  if(!selected.value?.id)return
+  if(!regionalForm.value.reason.trim()){formError.value='请填写区域组长分配原因';return}
+  saving.value=true;formError.value=''
+  try{await put(`/field/projects/${selected.value.id}/regional-leads`,{primary_lead_id:regionalForm.value.primary_lead_id||null,assistant_lead_ids:regionalForm.value.assistant_lead_ids.filter(id=>id!==regionalForm.value.primary_lead_id),reason:regionalForm.value.reason.trim()});await loadLocal();selected.value={...selected.value,...localProject.value};regionalForm.value.reason='';ElMessage.success('区域组长分配已保存')}
+  catch(e){formError.value=message(e)}finally{saving.value=false}
+}
 async function saveConfig(){
   saving.value=true;formError.value=''
   try{
@@ -146,8 +186,10 @@ async function cancelMember(row:any){
   saving.value=true;formError.value=''
   try{await post(`/field/assignments/${row.id}/remove`);await loadLocal()}catch(e){formError.value=message(e)}finally{saving.value=false}
 }
-function openTransfer(row:any){transferPerson.value=row;transferProject.value=undefined;formError.value='';transferVisible.value=true}
-async function transferMember(){saving.value=true;formError.value='';try{await post(`/field/assignments/${transferPerson.value.id}/transfer`,{project_id:transferProject.value});await loadLocal();transferVisible.value=false;ElMessage.success('调动已生效')}catch(e){formError.value=message(e)}finally{saving.value=false}}
+function openTransfer(row:any){transferPerson.value=row;transferProject.value=undefined;transferDate.value=addDays(today,1);transferReason.value='';formError.value='';transferVisible.value=true}
+function addDays(day:string,n:number){const date=new Date(day+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+n);return date.toISOString().slice(0,10)}
+async function transferMember(){saving.value=true;formError.value='';try{await post(`/field/assignments/${transferPerson.value.id}/transfer-requests`,{project_id:transferProject.value,effective_date:transferDate.value,reason:transferReason.value.trim()});await loadLocal();transferVisible.value=false;ElMessage.success('交接申请已提交，等待负责人确认')}catch(e){formError.value=message(e)}finally{saving.value=false}}
+async function reviewTransfer(row:any,approve:boolean){let note='';try{const result=await ElMessageBox.prompt(approve?'填写交接确认说明':'填写驳回原因','跨项目交接',{inputPlaceholder:'请填写原因',inputValidator:(value:string)=>!!value.trim()||'请填写原因'});note=result.value}catch{return}saving.value=true;try{await post(`/field/transfer-requests/${row.id}/review`,{approve,note:note.trim()});await loadLocal();ElMessage.success(approve?'已确认交接':'已驳回交接')}catch(e){error.value=message(e)}finally{saving.value=false}}
 function openMemberImport(){memberFile.value=null;importReport.value=null;formError.value='';importVisible.value=true}
 function selectMemberFile(event:Event){memberFile.value=(event.target as HTMLInputElement).files?.[0] || null;importReport.value=null}
 function downloadMemberTemplate(){const url=URL.createObjectURL(new Blob(['\ufeff姓名,手机号\r\n'],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='项目人员模板.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}

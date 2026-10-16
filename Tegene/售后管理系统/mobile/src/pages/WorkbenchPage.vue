@@ -63,15 +63,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { IonContent, IonIcon, IonPage } from '@ionic/vue'
+import { IonContent, IonIcon, IonPage, onIonViewWillEnter } from '@ionic/vue'
 import { searchOutline } from 'ionicons/icons'
-import { isRoleAllowed } from '@/config/access'
-import { workbenchSections } from '@/config/workbench'
+import { canAccessWorkbenchItem, workbenchSections } from '@/config/workbench'
 import { useAuthStore } from '@/stores/auth'
+import { get } from '@/utils/request'
 
 const router = useRouter()
 const auth = useAuthStore()
 const serviceQuery = ref('')
+const isProjectLeader = ref(false)
+
+onIonViewWillEnter(async () => {
+  isProjectLeader.value = false
+  try {
+    const directory = await get('/field/directory')
+    isProjectLeader.value = Array.isArray(directory.projects) && directory.projects.some((project: any) => project.manager_id === auth.user?.id)
+  } catch { isProjectLeader.value = false }
+})
 
 const visibleSections = computed(() => {
   const keyword = serviceQuery.value.trim().toLowerCase()
@@ -79,7 +88,7 @@ const visibleSections = computed(() => {
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => {
-        const matchesRole = isRoleAllowed(auth.roles, item.roles)
+        const matchesRole = canAccessWorkbenchItem(item, auth.roles, isProjectLeader.value)
         const matchesKeyword = !keyword || `${item.title} ${item.caption}`.toLowerCase().includes(keyword)
         return matchesRole && matchesKeyword
       }),

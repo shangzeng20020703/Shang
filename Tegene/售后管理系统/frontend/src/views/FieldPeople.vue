@@ -9,8 +9,8 @@
       </div>
     </header>
     <el-radio-group v-model="rosterGroup" class="roster-groups" aria-label="名册分类">
-      <el-radio-button value="employee">普通员工</el-radio-button>
-      <el-radio-button value="management">管理员账号</el-radio-button>
+      <el-radio-button value="employee">组员</el-radio-button>
+      <el-radio-button value="management">现场管理与管理员</el-radio-button>
     </el-radio-group>
     <section class="people-controls" aria-label="人员筛选">
       <div class="status-filters">
@@ -35,13 +35,13 @@
           <tbody>
             <tr v-for="person in pagedPeople" :key="person.id" :class="{departed:person.status==='离职'}">
               <td><strong class="person-name">{{ person.name }}</strong></td>
-              <td v-if="rosterGroup==='management'">{{ roles[person.role] || person.role }}</td>
+              <td v-if="rosterGroup==='management'">{{ person.field_role==='project_leader' ? `${roles[person.role] || person.role} · 项目组长` : (roles[person.role] || person.role) }}</td>
               <td><span class="employment-status" :class="statusClass(person.status)">{{ statusLabel(person.status) }}</span></td>
               <td class="phone-cell">{{ person.phone }}</td>
               <td><span class="row-primary">{{ person.department_name || '—' }}</span><span class="row-secondary">{{ person.company || '—' }}</span></td>
               <td><span class="project-name" :class="{unassigned:!person.current_project}">{{ person.current_project || '暂未安排' }}</span></td>
               <td><span class="account-state" :class="{locked:!person.is_active}"><el-icon><Lock v-if="!person.is_active" /><CircleCheck v-else /></el-icon>{{ person.status==='离职'?'已锁定':person.is_active?'已开通':'已停用' }}</span></td>
-              <td class="row-action"><el-button link type="primary" :aria-label="'编辑'+person.name+'的资料'" @click="edit(person)">编辑<el-icon><ArrowRight /></el-icon></el-button></td>
+              <td class="row-action"><el-button v-if="canEditPerson(person)" link type="primary" :aria-label="'编辑'+person.name+'的资料'" @click="edit(person)">编辑<el-icon><ArrowRight /></el-icon></el-button><span v-else class="role-help">仅管理员可编辑</span></td>
             </tr>
           </tbody>
         </table>
@@ -66,7 +66,7 @@
         <section class="account-settings"><h3>账号设置</h3>
         <el-form-item label="工号"><el-input v-model="form.employee_no" /></el-form-item>
         <el-form-item label="直属主管"><el-select placeholder="" v-model="form.direct_manager_id" clearable filterable><el-option v-for="p in people.filter(x=>x.id!==form.id&&x.is_active)" :key="p.id" :value="p.id" :label="p.name" /></el-select></el-form-item>
-        <el-form-item label="系统权限"><el-select placeholder="" v-model="form.role"><el-option v-for="(label,key) in permissionOptions" :key="key" :value="key" :label="label" /></el-select></el-form-item>
+        <el-form-item label="系统权限"><el-select placeholder="" v-model="form.role"><el-option v-for="(label,key) in permissionOptions" :key="key" :value="key" :label="label" /></el-select><small class="role-help">项目组长在项目库任命；售后经理由系统管理员任命，区域组长由售后经理或系统管理员任命。</small></el-form-item>
         <el-form-item :label="form.id?'重设密码':'初始密码'"><el-input v-model="form.password" type="password" show-password autocomplete="new-password" /></el-form-item>
         <el-form-item label="企微成员账号（userid）"><el-input v-model="form.wecom_userid" /></el-form-item>
         <el-form-item v-if="form.id" label="启用账号"><el-switch v-model="form.is_active" :disabled="form.status==='离职'" /></el-form-item>
@@ -100,13 +100,27 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { get, post, put } from '@/utils/request'
 import { ElMessage } from 'element-plus'
 import { Download, Upload, Plus, Search, Refresh, Filter, Lock, CircleCheck, ArrowRight } from '@element-plus/icons-vue'
+import {getWebAuthRoles, isWebAuthSuperuser} from '@/utils/authSession'
 const people=ref<any[]>([]), departments=ref<any[]>([]), query=ref(''), loading=ref(false), saving=ref(false), visible=ref(false), form=ref<any>({}), error=ref('')
 const columns=ref<{key:string,label:string,kind:string}[]>([])
-const roles:Record<string,string>={employee:'普通员工（仅移动端）',manager:'项目管理权限',hr:'售后负责人',admin:'系统管理员'}
-const permissionOptions=computed(()=>Object.fromEntries(Object.entries(roles).filter(([key])=>key!=='manager'||form.value.role==='manager')))
+const roles:Record<string,string>={employee:'组员',regional_lead:'区域组长',aftersales_manager:'售后经理',manager:'原部门经理权限',hr:'HR',admin:'系统管理员'}
+function canEditPerson(person:any){
+  if(isWebAuthSuperuser() || getWebAuthRoles().includes('admin'))return true
+  if(['admin','aftersales_manager','regional_lead'].includes(person.role) && !getWebAuthRoles().includes('aftersales_manager'))return false
+  if(getWebAuthRoles().includes('aftersales_manager'))return ['employee','regional_lead'].includes(person.role)
+  return person.role!=='admin' && person.role!=='aftersales_manager' && person.role!=='regional_lead'
+}
+const permissionOptions=computed(()=>Object.fromEntries(Object.entries(roles).filter(([key])=>{
+  const admin=isWebAuthSuperuser()||getWebAuthRoles().includes('admin')
+  const manager=getWebAuthRoles().includes('aftersales_manager')
+  if(key==='manager')return form.value.role==='manager'
+  if(key==='aftersales_manager')return admin||form.value.role===key
+  if(key==='regional_lead')return admin||manager||form.value.role===key
+  return key!=='admin'&&key!=='hr'||admin||form.value.role===key
+})))
 const rosterGroup=ref('employee')
-const ordinaryPeople=computed(()=>people.value.filter(p=>p.role==='employee'))
-const rosterPeople=computed(()=>people.value.filter(p=>rosterGroup.value==='management'?p.role!=='employee':p.role==='employee'))
+const ordinaryPeople=computed(()=>people.value.filter(p=>p.role==='employee'&&p.field_role!=='project_leader'))
+const rosterPeople=computed(()=>people.value.filter(p=>rosterGroup.value==='management'?(p.role!=='employee'||p.field_role==='project_leader'):(p.role==='employee'&&p.field_role!=='project_leader')))
 const statuses=['在职','试用','离职'], statusFilter=ref('')
 const statusLabel=(status:string)=>status==='试用'?'试用期':status||'待核对'
 const statusClass=(status:string)=>status==='离职'?'left':status==='试用'?'probation':'employed'
@@ -133,7 +147,7 @@ const columnFilters=ref<Record<string,string[]>>({})
 const filterColumns=computed(()=>[...columns.value,{key:'account_state',label:'账号状态',kind:'text'},...(rosterGroup.value==='management'?[{key:'role',label:'系统权限',kind:'text'}]:[])])
 const activeFilterCount=computed(()=>Object.values(columnFilters.value).filter(values=>values.length).length)
 function filterValue(person:any,key:string){
- if(key==='role')return roles[person.role]||person.role
+ if(key==='role')return person.field_role==='project_leader'?`${roles[person.role]||person.role} · 项目组长`:roles[person.role]||person.role
  if(key==='account_state')return person.status==='离职'?'已锁定':person.is_active?'已开通':'已停用'
  if(key==='status')return statusLabel(person.status)
  return String(person[key]??'')
@@ -196,6 +210,7 @@ onMounted(load)
 .person-form .el-select,.person-form .el-input-number { width:100%; }.account-settings { border:1px solid #e9eaf1; padding:16px; border-radius:10px; margin-bottom:20px; }.account-settings h3 { color:#69718a; font-size:14px; margin:0 0 20px; }
 .editor-footer { display:flex; justify-content:flex-end; align-items:center; gap:12px; }.editor-footer>span { font-size:12px; color:#9a9fb0; }
 .import-preview { max-height:420px; overflow:auto; }.import-person { border:1px solid #e9eaf1; border-radius:10px; padding:14px; margin:10px 0; }.import-person summary { display:flex; flex-wrap:wrap; gap:12px; align-items:center; cursor:pointer; font-size:12px; color:#737c90; }.import-person summary strong { color:#3b4259; }.import-line { color:#a0a5b4; }.preview-fields { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; font-size:12px; }.preview-fields dt { color:#9299a9; }.preview-fields dd { color:#444c63; margin:5px 0; overflow-wrap:anywhere; }
+.role-help{display:block;color:#788195;line-height:1.5;margin-top:6px}
 .roster-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
 @media (max-width: 1100px) { .people-header,.people-controls { align-items:flex-start; flex-direction:column; }.search-actions { width:100%; } }
 @media (max-width: 600px) { .roster-fields { grid-template-columns: 1fr; }.people-header h1 { font-size:24px; }.editor-footer { flex-wrap:wrap; }.preview-fields { grid-template-columns:1fr 1fr; } }

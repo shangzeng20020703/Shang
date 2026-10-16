@@ -32,6 +32,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -40,6 +41,7 @@ from app.core.deps import get_current_user, get_user_role_names, require_roles
 from app.core.limiter import limiter
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.employee import Employee
+from app.models.field_service import FieldProject
 from app.schemas.employee import ChangePasswordRequest, EmployeeOut, LoginRequest, Token
 from app.services.employee import EmployeeService
 
@@ -48,7 +50,7 @@ from app.api.v1.wecom_auth import router as wecom_router
 router = APIRouter()
 router.include_router(wecom_router)
 
-MANAGEMENT_LOGIN_ROLES = {"admin", "hr", "manager"}
+MANAGEMENT_LOGIN_ROLES = {"admin", "hr", "manager", "regional_lead", "aftersales_manager"}
 
 
 def has_management_login_role(role_names: set[str]) -> bool:
@@ -152,7 +154,8 @@ async def management_login(
     """
     employee = await _authenticate_for_login(db, data)
     role_names = await get_user_role_names(db, employee)
-    if not has_management_login_role(role_names):
+    if not has_management_login_role(role_names) and not await db.scalar(
+            select(FieldProject.id).where(FieldProject.manager_id == employee.id).limit(1)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="当前账号未开通管理端权限，请使用员工端入口",
@@ -162,8 +165,13 @@ async def management_login(
 
 @router.get("/management-session", response_model=EmployeeOut, summary="复核管理后台访问权限")
 async def management_session(
-    current_user: Employee = Depends(require_roles(*MANAGEMENT_LOGIN_ROLES)),
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
 ):
+    role_names = await get_user_role_names(db, current_user)
+    if not has_management_login_role(role_names) and not await db.scalar(
+            select(FieldProject.id).where(FieldProject.manager_id == current_user.id).limit(1)):
+        raise HTTPException(403, "当前账号未开通管理端权限")
     return await get_me(current_user)
 
 

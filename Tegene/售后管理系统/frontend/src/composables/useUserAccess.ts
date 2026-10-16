@@ -6,6 +6,8 @@ const ROLE_LABELS: Record<string, string> = {
   asset_admin: '行政管理员',
   hr: '售后管理员',
   manager: '项目经理',
+  regional_lead: '区域组长',
+  aftersales_manager: '售后经理',
   finance: '财务',
   employee: '售后人员',
 }
@@ -29,6 +31,8 @@ export function useUserAccess() {
   const primaryRole = computed(() => {
     if (isSuperuser.value) return 'admin'
     if (roles.value.includes('admin')) return 'admin'
+    if (roles.value.includes('aftersales_manager')) return 'aftersales_manager'
+    if (roles.value.includes('regional_lead')) return 'regional_lead'
     if (roles.value.includes('asset_admin')) return 'asset_admin'
     if (roles.value.includes('hr')) return 'hr'
     if (roles.value.includes('manager')) return 'manager'

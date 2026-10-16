@@ -67,6 +67,16 @@ async def main():
         assignment = directory["assignments"][0]
         site = directory["sites"][0]
         staff_id = assignment["employee_id"]
+        regional = await req("POST", "/field/people", "admin", json={
+            "name": "验收区域组长", "phone": "13800000871", "role": "regional_lead"})
+        aftersales = await req("POST", "/field/people", "admin", json={
+            "name": "验收售后经理", "phone": "13800000872", "role": "aftersales_manager"})
+        for name, phone in (("regional", "13800000871"), ("aftersales", "13800000872")):
+            tokens[name] = (await req("POST", "/auth/login", json={
+                "phone": phone, "password": "585858"}))["access_token"]
+        await req("PUT", f"/field/projects/{site['project_id']}/regional-leads", "aftersales",
+                  json={"primary_lead_id": regional["id"], "assistant_lead_ids": [],
+                        "reason": "隔离验收项目授权"})
         profile = await req("GET", "/ess/profile", "staff")
         assert profile["id"] == staff_id
         await req("PUT", "/ess/profile", "staff", json={"email": "demo@example.test"})
@@ -99,22 +109,23 @@ async def main():
         )
         passed.append("overlapping assignments rejected atomically")
         day = today() + timedelta(days=12)
+        assignment_data = {
+            "site_id": site["id"], "employee_id": staff_id,
+            "start_date": str(day), "end_date": str(day + timedelta(days=2)),
+        }
+        await req("POST", "/field/assignments", "manager", status=403,
+                  json=assignment_data)
         new = await req(
             "POST",
             "/field/assignments",
-            "manager",
-            json={
-                "site_id": site["id"],
-                "employee_id": staff_id,
-                "start_date": str(day),
-                "end_date": str(day + timedelta(days=2)),
-            },
+            "regional",
+            json=assignment_data,
         )
-        await req("POST", f"/field/assignments/{new['id']}/cancel", "manager")
+        await req("POST", f"/field/assignments/{new['id']}/cancel", "regional")
         assert (
             await req("GET", "/field/dashboard", "manager", params={"day": str(day)})
         )["total_scheduled"] == 0
-        passed.append("manager creates and cancels future shifts with FK integrity")
+        passed.append("assigned regional lead creates and cancels future shifts with FK integrity")
         for endpoint in ["clock-in", "clock-out"]:
             await req(
                 "POST", "/attendance/" + endpoint, "staff", json={"source": "app"}
@@ -241,7 +252,7 @@ async def main():
         await req(
             "POST",
             f"/approval/instances/{leave['id']}/process",
-            "manager",
+            "aftersales",
             json={"action": "approve"},
         )
         async with async_session() as db:

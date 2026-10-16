@@ -2,7 +2,7 @@ from datetime import date
 from uuid import UUID
 from pathlib import Path
 from fastapi.responses import FileResponse
-from fastapi import APIRouter, Depends, Query, UploadFile, File, Response
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Response, HTTPException
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_roles
 from app.schemas.field_service import (
@@ -13,6 +13,9 @@ from app.schemas.field_service import (
     TegeneProjectInput,
     ProjectConfigurationInput,
     ProjectMembersInput,
+    RegionalLeadsInput,
+    TransferRequestInput,
+    TransferReviewInput,
 )
 from app.services import field_service as service
 from app.services import tegene_projects
@@ -38,7 +41,9 @@ async def tegene_project_link(external_id: UUID, data: TegeneProjectInput,
 @router.post("/tegene/projects/{external_id}/configure")
 async def configure_tegene_project(external_id: UUID, data: ProjectConfigurationInput,
                                   db=Depends(get_db), user=Depends(get_current_user)):
-    await service.require_admin(db, user)
+    from app.services.field_roles import role_names
+    if not await role_names(db, user) & {"admin", "aftersales_manager"}:
+        raise HTTPException(403, "仅售后经理可将新项目接入售后库")
     if data.manager_id is None:
         raise HTTPException(422, "请先指定项目负责人")
     linked = await tegene_projects.link_project(db, user, external_id, data)
@@ -75,6 +80,31 @@ async def transfer_member(item_id: int, data: TransferInput, db=Depends(get_db),
     return await service.audited("transfer-member", field_membership.remove_or_transfer)(db, user, item_id, data.project_id)
 
 
+@router.post("/assignments/{item_id}/transfer-requests")
+async def request_future_transfer(item_id: int, data: TransferRequestInput,
+                                  db=Depends(get_db), user=Depends(get_current_user)):
+    return await field_membership.request_transfer(db, user, item_id, data)
+
+
+@router.get("/transfer-requests")
+async def transfer_requests(db=Depends(get_db), user=Depends(get_current_user)):
+    return await field_membership.list_transfer_requests(db, user)
+
+
+@router.post("/transfer-requests/{request_id}/review")
+async def review_future_transfer(request_id: int, data: TransferReviewInput,
+                                 db=Depends(get_db), user=Depends(get_current_user)):
+    return await field_membership.review_transfer(db, user, request_id, data)
+
+
+@router.put("/projects/{project_id}/regional-leads")
+async def assign_regional_leads(project_id: int, data: RegionalLeadsInput,
+                                db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_roles import set_project_regional_leads
+    return await set_project_regional_leads(db, user, project_id,
+        data.primary_lead_id, data.assistant_lead_ids, data.reason)
+
+
 @router.get("/directory")
 async def directory(db=Depends(get_db), user=Depends(get_current_user)):
     return await service.directory(db, user)
@@ -83,8 +113,16 @@ async def directory(db=Depends(get_db), user=Depends(get_current_user)):
 @router.get("/dashboard")
 async def dashboard(
     day: date | None = None, project_id: int | None = Query(None, gt=0),
-    db=Depends(get_db), user=Depends(require_roles("admin", "hr", "manager"))
+    db=Depends(get_db), user=Depends(get_current_user)
 ):
+    from sqlalchemy import select
+    from fastapi import HTTPException
+    from app.models.field_service import FieldProject
+    from app.services.field_roles import role_names
+    names = await role_names(db, user)
+    if not names & {"admin", "hr", "aftersales_manager", "regional_lead"} and not await db.scalar(
+        select(FieldProject.id).where(FieldProject.manager_id == user.id).limit(1)):
+        raise HTTPException(403, "仅现场管理人员可查看项目考勤总览")
     return await service.dashboard(db, user, day or service.today(), project_id, include_trend=True)
 
 
@@ -166,7 +204,10 @@ async def people(db=Depends(get_db), user=Depends(get_current_user)):
 
 @router.get("/roster/template")
 async def roster_template(db=Depends(get_db), user=Depends(get_current_user)):
-    await service.require_admin(db, user)
+    from app.services.field_roles import role_names
+    from fastapi import HTTPException
+    if not await role_names(db, user) & {"admin", "hr", "aftersales_manager"}:
+        raise HTTPException(403, "无权下载售后花名册模板")
     return FileResponse(Path(__file__).resolve().parents[2] / "templates" / "aftersales-roster.xlsx",
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         filename="售后名册模板.xlsx")
@@ -174,7 +215,10 @@ async def roster_template(db=Depends(get_db), user=Depends(get_current_user)):
 
 @router.get("/roster/columns")
 async def roster_columns(db=Depends(get_db), user=Depends(get_current_user)):
-    await service.require_admin(db, user)
+    from app.services.field_roles import role_names
+    from fastapi import HTTPException
+    if not await role_names(db, user) & {"admin", "hr", "aftersales_manager"}:
+        raise HTTPException(403, "无权查看售后花名册列")
     return [{"key": key, "label": label, "kind": kind} for key, label, kind in ROSTER_COLUMNS]
 
 

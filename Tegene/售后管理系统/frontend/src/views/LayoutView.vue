@@ -305,10 +305,12 @@ const canAccessFixedAssets = computed(() => hasAnyRole('admin', 'asset_admin'))
 
 const navigationGroups = computed(() => {
   const admin = hasAnyRole('admin', 'hr')
+  const roster = hasAnyRole('admin', 'hr', 'aftersales_manager')
+  const rules = hasAnyRole('admin', 'hr', 'regional_lead', 'aftersales_manager')
   return [
     { title: '工作台', items: [{ path:'/dashboard', label:'项目人员看板', icon:DataBoard }, { path:'/field', label:'项目库', icon:Connection }] },
-    { title: '人员管理', items: admin ? [{ path:'/organization', label:'组织架构', icon:OfficeBuilding }, { path:'/employees', label:'人员花名册', icon:User }] : [] },
-    { title: '考勤管理', items: [...(admin ? [{ path:'/attendance', label:'考勤管理', icon:Clock }] : []), { path:'/rotation', label:'现场轮休', icon:Clock }] },
+    { title: '人员管理', items: [...(admin ? [{ path:'/organization', label:'组织架构', icon:OfficeBuilding }] : []), ...(roster ? [{ path:'/employees', label:'人员花名册', icon:User }] : [])] },
+    { title: '考勤管理', items: [...(rules ? [{ path:'/attendance', label:'考勤管理', icon:Clock }] : []), { path:'/rotation', label:'现场轮休', icon:Clock }] },
     { title: '流程与管理', items: [{ path:'/approval', label:'审批管理', icon:Stamp }, ...(admin ? [{ path:'/audit', label:'操作日志', icon:Tickets }] : [])] },
   ].filter(group => group.items.length)
 })

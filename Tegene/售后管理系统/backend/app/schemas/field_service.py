@@ -73,6 +73,23 @@ class TransferInput(BaseModel):
     project_id: int = Field(gt=0)
 
 
+class RegionalLeadsInput(BaseModel):
+    primary_lead_id: int | None = Field(default=None, gt=0)
+    assistant_lead_ids: list[int] = Field(default_factory=list, max_length=20)
+    reason: str = Field(default="", max_length=500)
+
+
+class TransferRequestInput(BaseModel):
+    project_id: int = Field(gt=0)
+    effective_date: date
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class TransferReviewInput(BaseModel):
+    approve: bool
+    note: str = Field(min_length=1, max_length=500)
+
+
 class PersonInput(RosterFields):
     employee_no: str = Field(default="", max_length=30)
     name: str = Field(min_length=1, max_length=50)
@@ -84,7 +101,7 @@ class PersonInput(RosterFields):
     status: str = Field(default="在职", pattern="^(在职|试用|离职)$")
     password: str | None = Field(default=None, min_length=8, max_length=72)
     wecom_userid: str | None = Field(default=None, max_length=128)
-    role: str = Field(default="employee", pattern="^(employee|manager|hr|admin)$")
+    role: str = Field(default="employee", pattern="^(employee|manager|hr|admin|regional_lead|aftersales_manager)$")
 
     @field_validator("status", mode="before")
     @classmethod

@@ -1108,7 +1108,7 @@ async def list_instances(
     applicant_id: Optional[int] = Query(None, description="按申请人员工 ID 筛选"),
     applicant_keyword: Optional[str] = Query(None, description="按申请人姓名或工号筛选"),
     db: AsyncSession = Depends(get_db),
-    _current_user: Employee = Depends(require_roles("admin", "hr")),
+    _current_user: Employee = Depends(require_roles("admin", "hr", "aftersales_manager")),
 ) -> ApprovalInstancePage:
     """
     GET /approval/instances — 管理后台审批实例列表
@@ -1116,6 +1116,12 @@ async def list_instances(
     用途：审批管理页查看系统内全部审批实例，并按已提交、待审批、已审批分组展示。
     """
     filters = []
+    roles = await get_user_role_names(db, _current_user)
+    if not roles.intersection({"admin", "hr"}):
+        from app.services.field_roles import aftersales_person_ids
+
+        filters.append(ApprovalInstance.module.in_(svc.FIELD_ABSENCE_CODES))
+        filters.append(ApprovalInstance.applicant_id.in_(aftersales_person_ids()))
     if group == "pending":
         filters.append(ApprovalInstance.status == "pending")
     elif group == "approved":
@@ -1200,7 +1206,14 @@ async def get_instance(
     """
     instance = await svc.get_instance(db, instance_id)
     roles = await get_user_role_names(db, current_user)
-    if not (roles & {"admin", "hr"}) and not await svc.user_can_view_instance(db, instance, current_user.id):
+    can_view_aftersales_absence = (
+        "aftersales_manager" in roles
+        and await svc._is_field_absence_instance(db, instance)
+    )
+    field_absence = await svc._is_field_absence_instance(db, instance)
+    if field_absence and not (roles & {"admin", "hr"}) and not can_view_aftersales_absence and instance.applicant_id != current_user.id:
+        raise HTTPException(status_code=403, detail="无权查看该售后审批记录")
+    if not (roles & {"admin", "hr"}) and not can_view_aftersales_absence and not await svc.user_can_view_instance(db, instance, current_user.id):
         raise HTTPException(status_code=403, detail="无权查看该审批记录")
     await svc.mark_approval_notifications_read_for_recipient(db, current_user.id, instance.id)
     return await _approval_instance_detail(db, instance)
