@@ -123,7 +123,7 @@ async def preview(db, user, project_id, data):
             row = await day_row(db, eid, day)
             original = "rest" if (day - data.cycle_start).days % 7 == 6 else "work"
             result.append({"employee_id": eid, "date": day, "cycle_start": data.cycle_start,
-                "original_kind": row.original_kind if row and row.cycle_start == data.cycle_start else original, "kind": edits.get(day, original),
+                "original_kind": row.original_kind if row and row.project_id == project_id and row.cycle_start == data.cycle_start else original, "kind": edits.get(day, original),
                 "expected_revision": row.revision if row else 0})
     digest = hashlib.sha256(json.dumps(jsonable_encoder([snapshot(rule), result]), sort_keys=True).encode()).hexdigest()
     return {"rows": result, "revision": digest, "rule_id": rule.id}
@@ -143,13 +143,14 @@ async def publish(db, user, project_id, data, revision):
         if await db.scalar(select(AttendanceRecord.id).where(AttendanceRecord.employee_id == eid, AttendanceRecord.date == day)):
             raise HTTPException(409, "当天已有打卡，请从未来日期发布；已有排班通过带原因的日期调整修改")
         if row:
-            if row.project_id != project_id:
-                raise HTTPException(409, "人员当天已有其他项目排班，请先核对调动")
+            if row.project_id != project_id and await member_on(db, eid, row.project_id, day):
+                raise HTTPException(409, "人员当天仍参与其他项目，请从调动后的未来日期安排")
             if row.kind in {"leave", "half_leave"}:
                 raise HTTPException(409, "已有批准调休，不能用周期排班覆盖")
             if await db.scalar(select(AttendanceRecord.id).where(AttendanceRecord.employee_id == eid, AttendanceRecord.date == day)):
                 raise HTTPException(409, "当天已有打卡，请通过带原因的日期调整修改")
             before = day_view(row)
+            row.project_id = project_id
             row.kind = item["kind"]
             row.original_kind = item["original_kind"]
             row.cycle_start = data.cycle_start
