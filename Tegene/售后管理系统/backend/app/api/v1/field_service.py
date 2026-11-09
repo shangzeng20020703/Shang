@@ -13,6 +13,7 @@ from app.schemas.field_service import (
     TegeneProjectInput,
     ProjectConfigurationInput,
     ProjectMembersInput,
+    PendingRosterInput,
     RegionalLeadsInput,
     TransferRequestInput,
     TransferReviewInput,
@@ -54,6 +55,21 @@ async def configure_tegene_project(external_id: UUID, data: ProjectConfiguration
 async def configure_project(project_id: int, data: ProjectConfigurationInput,
                             db=Depends(get_db), user=Depends(get_current_user)):
     return await service.configure_project(db, user, project_id, data)
+
+
+@router.put("/projects/{project_id}/pending-roster")
+async def confirm_project_pending_roster(project_id: int, data: PendingRosterInput,
+                                         db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_pending import confirm_pending_roster
+    return await confirm_pending_roster(db, user, project_id, data)
+
+
+@router.post("/tegene/projects/{external_id}/pending-roster")
+async def confirm_tegene_pending_roster(external_id: UUID, data: PendingRosterInput,
+                                        db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_pending import confirm_pending_roster
+    linked = await tegene_projects.link_project(db, user, external_id, data)
+    return await confirm_pending_roster(db, user, linked["project_id"], data)
 
 
 @router.post("/projects/{project_id}/members")

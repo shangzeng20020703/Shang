@@ -22,13 +22,15 @@
         <section class="panel" v-if="canManage && projectId">
           <h2>本周个人排班</h2>
           <p v-if="!rotationRule" class="warning">请先完成上方的项目规则设置；当前没有可发布的排班人员。</p>
-          <p v-if="!publishableWeek" class="hint">本周没有可发布的未来日期，可查看下方历史排班；请切换到本周或未来一周继续排班。</p>
-          <p v-else class="hint">本次发布 {{publishStart}} 至 {{weekEndDate}}；已过去的日期及规则尚未生效的日期不会纳入。</p>
+          <p v-else-if="projectPendingMembers.length" class="warning">{{projectPendingMembers.length}} 位项目人员仍待启用。请先处理上方提示，启用整份名单后才能发布排班。</p>
+          <p v-if="rotationRule && !publishableWeek" class="hint">{{ruleStartsAfterWeek ? `本项目规则将于 ${selectedRule.effective_date} 生效，请切换到生效日期所在周排班。` : '本周没有可发布的未来日期，可查看下方历史排班；请切换到本周或未来一周继续排班。'}}</p>
+          <p v-else-if="rotationRule" class="hint">本次发布 {{publishStart}} 至 {{weekEndDate}}；已过去的日期及规则尚未生效的日期不会纳入。</p>
+          <p v-if="rotationRule && publishableWeek && !projectPendingMembers.length && !eligibleMembers.length" class="warning">本周没有已启用且在此日期范围内生效的人员。请核对项目人员名单，或切换到人员生效的周。</p>
           <el-form label-width="100px" :disabled="saving">
             <el-form-item label="参与人员"><el-select v-model="plan.employee_ids" multiple placeholder="本周已分配人员默认全选，可取消选择" style="width:100%" @change="invalidatePreview"><el-option v-for="p in eligibleMembers" :key="p.id" :label="p.name" :value="p.id" /></el-select></el-form-item>
             <el-form-item label="周期起点"><el-date-picker v-model="plan.cycle_start" value-format="YYYY-MM-DD" @change="invalidatePreview" /><span class="hint">首次排班从这天起上六天、第七天休；已建立的个人周期跨项目延续，不因调班或交接重置。</span></el-form-item>
             <el-form-item label="原因"><el-input v-model="plan.reason" maxlength="500" /></el-form-item>
-            <el-form-item><el-button :disabled="!canPreviewPlan" @click="preview">预览本周排班</el-button><el-button type="primary" :disabled="!previewData.revision || !previewData.rows.length" @click="publish">确认发布 {{previewData.rows.length || ''}} 人日</el-button></el-form-item>
+            <el-form-item><el-button :disabled="!canPreviewPlan" @click="preview">预览本周排班</el-button><el-button type="primary" :disabled="!canPublishPlan" @click="publish">确认发布 {{previewData.rows.length || ''}} 人日</el-button></el-form-item>
           </el-form>
           <el-table v-if="previewData.rows.length" :data="previewData.rows" max-height="350" size="small"><el-table-column label="人员"><template #default="{row}">{{name(row.employee_id)}}</template></el-table-column><el-table-column prop="date" label="日期"/><el-table-column prop="cycle_start" label="个人周期起点"/><el-table-column label="原定"><template #default="{row}">{{labels[row.original_kind]}}</template></el-table-column><el-table-column label="发布安排"><template #default="{row}"><el-select :model-value="row.kind" @change="(kind:any)=>editPreview(row,kind)"><el-option label="上班" value="work"/><el-option label="正常轮休" value="rest"/></el-select></template></el-table-column><el-table-column label="班别（仅展示）" width="135"><template #default="{row}"><el-select :model-value="row.shift_label || ''" :disabled="row.kind!=='work'" @change="(value:any)=>editPreviewShift(row,value)"><el-option label="未指定" value=""/><el-option label="白班" value="day"/><el-option label="夜班" value="night"/></el-select></template></el-table-column></el-table>
           <p v-if="previewData.rows.length" class="hint">每行只修改对应人员的当天安排；原定轮休日与个人周期保留。</p>
@@ -86,14 +88,16 @@ const selectedRule=computed(()=>directory.value.rules.find((r:any)=>r.id===selec
 const rotationRule=computed(()=>selectedRule.value?.rule_type==='rotation')
 const publishStart=computed(()=>{const dates=[today,weekStartDate.value,String(selectedRule.value?.effective_date || '')].sort();return dates[dates.length-1] || today})
 const publishableWeek=computed(()=>publishStart.value<=weekEndDate.value)
+const ruleStartsAfterWeek=computed(()=>!!selectedRule.value?.effective_date && selectedRule.value.effective_date>weekEndDate.value)
 const memberAssignments=computed<any[]>(()=>directory.value.assignments.filter((a:any)=>a.project_id===projectId.value && (a.is_current || a.status==='active')))
 const members=computed<any[]>(()=>{const ids=new Set(memberAssignments.value.map((a:any)=>a.employee_id));return directory.value.people.filter((p:any)=>ids.has(p.id))})
 const eligibleMembers=computed<any[]>(()=>{
-  if(!publishableWeek.value)return []
+  if(!publishableWeek.value || projectPendingMembers.value.length)return []
   const ids=new Set(memberAssignments.value.filter((a:any)=>(!a.start_date || a.start_date<=weekEndDate.value) && (!a.end_date || a.end_date>=publishStart.value)).map((a:any)=>a.employee_id))
   return members.value.filter((p:any)=>ids.has(p.id))
 })
-const canPreviewPlan=computed(()=>rotationRule.value && publishableWeek.value && plan.value.employee_ids.length>0 && !!plan.value.cycle_start && plan.value.cycle_start<=publishStart.value && !!String(plan.value.reason || '').trim())
+const canPreviewPlan=computed(()=>rotationRule.value && publishableWeek.value && !projectPendingMembers.value.length && plan.value.employee_ids.length>0 && !!plan.value.cycle_start && plan.value.cycle_start<=publishStart.value && !!String(plan.value.reason || '').trim())
+const canPublishPlan=computed(()=>canPreviewPlan.value && !!previewData.value.revision && previewData.value.rows.length>0)
 function name(id:number){return directory.value.people.find((p:any)=>p.id===id)?.name || `人员${id}`}
 function openProjectRule(){if(projectId.value)router.push({path:'/attendance',query:{tab:'rules',project_id:projectId.value}})}
 const labels:any={work:'上班',rest:'正常轮休',leave:'调休',half_leave:'半天调休',pending:'待确认'},claimLabels:any={schedule:'调班',credit:'出勤确认',leave:'调休'},statusLabels:any={pending:'待审批',approved:'已批准',rejected:'已驳回',revoked:'已撤销'}
@@ -121,7 +125,7 @@ function planBody(){return {...plan.value,start_date:publishStart.value,end_date
 async function preview(){await run(async()=>{previewData.value=await post(`/rotation/projects/${projectId.value}/preview`,planBody())})}
 async function editPreview(row:any,kind:string){const existing=plan.value.person_edits.find((e:any)=>e.date===row.date && e.employee_id===row.employee_id);plan.value.person_edits=[...plan.value.person_edits.filter((e:any)=>e.date!==row.date || e.employee_id!==row.employee_id),{employee_id:row.employee_id,date:row.date,kind,shift_label:kind==='work'?(existing?.shift_label ?? row.shift_label ?? null):null}];await preview()}
 async function editPreviewShift(row:any,value:string){const existing=plan.value.person_edits.find((e:any)=>e.date===row.date && e.employee_id===row.employee_id);plan.value.person_edits=[...plan.value.person_edits.filter((e:any)=>e.date!==row.date || e.employee_id!==row.employee_id),{employee_id:row.employee_id,date:row.date,kind:existing?.kind || row.kind || 'work',shift_label:value||null}];await preview()}
-async function publish(){await ElMessageBox.confirm('发布后按个人日期判断出勤，确认所选人员和日期正确。','发布排班');await run(async()=>{await post(`/rotation/projects/${projectId.value}/publish?revision=${previewData.value.revision}`,planBody());invalidatePreview();await reloadCalendar();ElMessage.success('排班已发布')})}
+async function publish(){if(!canPublishPlan.value)return;await ElMessageBox.confirm('发布后按个人日期判断出勤，确认所选人员和日期正确。','发布排班');await run(async()=>{await post(`/rotation/projects/${projectId.value}/publish?revision=${previewData.value.revision}`,planBody());invalidatePreview();await reloadCalendar();ElMessage.success('排班已发布')})}
 const adjustDialog=ref(false),adjustKind=ref('work'),adjustShiftLabel=ref(''),adjustReason=ref('')
 async function adjust(){
   if(!adjustReason.value.trim())return ElMessage.warning('请填写原因')

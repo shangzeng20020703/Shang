@@ -4,7 +4,8 @@
 
 | 版本 | 来源提交 | 逐文件清单 | 状态 |
 |---|---|---|---|
-| [20261016-182732-CST-a005dad](versions/20261016-182732-CST-a005dad/) | `a005dad81a58b7d988820fe37f28ad8a2ff98f5e` | [JSON](versions/manifests/20261016-182732-CST-a005dad.json) | 当前；项目人员名单保存状态与规则启用提示；未部署服务器 |
+| [20261109-134121-CST-18f9ff9](versions/20261109-134121-CST-18f9ff9/) | `18f9ff9e1a1bd106b65a6467fd95f45802da2ac0` | [JSON](versions/manifests/20261109-134121-CST-18f9ff9.json) | 当前；项目人员一次确认、轮休规则与排班入口修正；未部署服务器 |
+| [20261016-182732-CST-a005dad](versions/20261016-182732-CST-a005dad/) | `a005dad81a58b7d988820fe37f28ad8a2ff98f5e` | [JSON](versions/manifests/20261016-182732-CST-a005dad.json) | 历史版本；项目人员名单保存状态与规则启用提示；未部署服务器 |
 | [20261016-180101-CST-87dc66b](versions/20261016-180101-CST-87dc66b/) | `87dc66b9e886d291df1bbcec442d06677e8e22b5` | [JSON](versions/manifests/20261016-180101-CST-87dc66b.json) | 历史版本；待配置人员、项目规则与每周个人排班；本机预览版，未部署服务器 |
 | [20261016-150240-CST-d60ebcb](versions/20261016-150240-CST-d60ebcb/) | `d60ebcb204f22079d8cae0d3ae2130eefdc8c65b` | [JSON](versions/manifests/20261016-150240-CST-d60ebcb.json) | 历史版本；现场权限与跨项目排班审批 |
 | [20261016-095945-CST-d753ad1](versions/20261016-095945-CST-d753ad1/) | `d753ad109bbad801425437f9c384ce76a88b29db` | [JSON](versions/manifests/20261016-095945-CST-d753ad1.json) | 历史版本；现场轮休与待休流水 |

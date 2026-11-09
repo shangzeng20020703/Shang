@@ -70,6 +70,22 @@ class ProjectMembersInput(BaseModel):
         return self
 
 
+class PendingRosterInput(BaseModel):
+    """The complete project roster selected before an attendance rule exists."""
+
+    manager_id: int = Field(gt=0)
+    member_ids: list[int] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def check_roster(self):
+        if (any(employee_id <= 0 for employee_id in self.member_ids)
+                or len(set(self.member_ids)) != len(self.member_ids)):
+            raise ValueError("请选择不重复的有效组员")
+        if self.manager_id in self.member_ids:
+            raise ValueError("项目组长不能同时作为组员重复选择")
+        return self
+
+
 class TransferInput(BaseModel):
     project_id: int = Field(gt=0)
 

@@ -106,7 +106,7 @@ export function getWebManagementHomePath(roles: string[], isSuperuser: boolean):
   const roleSet = new Set(roles.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean))
   if (isSuperuser || roleSet.has('admin') || roleSet.has('hr')) return '/dashboard'
   if (roleSet.has('manager') || roleSet.has('regional_lead') || roleSet.has('aftersales_manager')) return '/dashboard'
-  if (roleSet.has('project_leader')) return '/rotation'
+  if (roleSet.has('project_leader')) return '/field'
   if (roleSet.has('asset_admin')) return '/fixed-assets'
   if (roleSet.has('finance')) return '/payroll'
   return '/login'

@@ -27,6 +27,7 @@ async def test_project_rule_create_and_update_respect_assigned_project_scope():
             Employee(id=3, employee_no="REGION1", name="区域组长甲", phone="19900000003", status="在职"),
             Employee(id=4, employee_no="REGION2", name="区域组长乙", phone="19900000004", status="在职"),
             Employee(id=5, employee_no="LEADER", name="项目组长", phone="19900000005", status="在职"),
+                Employee(id=6, employee_no="LEADER2", name="项目二组长", phone="19900000006", status="在职"),
         ])
         await db.flush()
         db.add_all([
@@ -38,7 +39,7 @@ async def test_project_rule_create_and_update_respect_assigned_project_scope():
         await db.flush()
         db.add_all([
             FieldProject(id=1, code="P1", name="项目一", customer_id=1, manager_id=5),
-            FieldProject(id=2, code="P2", name="项目二", customer_id=1, manager_id=5),
+                FieldProject(id=2, code="P2", name="项目二", customer_id=1, manager_id=6),
         ])
         await db.flush()
         db.add_all([

@@ -1,14 +1,18 @@
 """Pre-rule project roster and atomic activation into attendance memberships."""
 
+import json
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import delete, or_, select
 
 from app.models.attendance import AttendanceRule
+from app.models.audit_log import AuditLog
 from app.models.employee import Employee
+from app.models.employee_role import EmployeeRole
 from app.models.field_service import (
-    FieldAssignment, FieldMembership, FieldProject, FieldProjectPendingMember, FieldSite,
+    FieldAssignment, FieldMembership, FieldProject, FieldProjectPendingMember,
+    FieldRosterProfile, FieldSite,
 )
 from app.services.field_membership import CST, clock_now, lock_person
 
@@ -23,6 +27,76 @@ async def _rows(db, project_id):
     return list((await db.scalars(select(FieldProjectPendingMember).where(
         FieldProjectPendingMember.project_id == project_id,
     ).order_by(FieldProjectPendingMember.id))).all())
+
+
+async def confirm_pending_roster(db, user, project_id, data):
+    """Replace one pre-rule roster, including its leader, in the request transaction."""
+    from app.services.field_service import field_staff_category, require_project_manager
+    from app.services.field_roles import record_project_leader_change
+
+    project = await require_project_manager(db, user, project_id)
+    # Serialize two managers confirming the same project. The unique pending
+    # person constraint remains a second line of defence in MySQL.
+    project = await db.scalar(select(FieldProject).where(
+        FieldProject.id == project.id).with_for_update().execution_options(populate_existing=True))
+    if not project.is_active:
+        raise HTTPException(422, "项目已停用")
+    if await db.scalar(select(FieldSite.id).where(FieldSite.project_id == project_id).limit(1)):
+        raise HTTPException(409, "项目已建立考勤规则，请使用现有人员维护和调动流程")
+
+    requested_ids = [data.manager_id, *data.member_ids]
+    people = {person.id: person for person in (await db.scalars(select(Employee).where(
+        Employee.id.in_(requested_ids)))).all()}
+    profiles = {row.employee_id: row.details or {} for row in (await db.scalars(
+        select(FieldRosterProfile).where(FieldRosterProfile.employee_id.in_(requested_ids))
+    )).all()}
+    role_rows = (await db.execute(select(EmployeeRole.employee_id, EmployeeRole.role_name).where(
+        EmployeeRole.employee_id.in_(requested_ids), EmployeeRole.is_active.is_(True)
+    ))).all()
+    active_roles = {}
+    for employee_id, role_name in role_rows:
+        active_roles.setdefault(employee_id, set()).add(role_name)
+    incumbent_ids = set((await db.scalars(select(FieldProject.manager_id).where(
+        FieldProject.manager_id.is_not(None)))).all())
+    for employee_id in requested_ids:
+        person = people.get(employee_id)
+        if not person or not person.is_active or person.status not in {"在职", "试用"}:
+            raise HTTPException(422, f"人员 {employee_id} 不在有效花名册中")
+        category = field_staff_category(person, active_roles.get(employee_id, set()),
+                                        profiles.get(employee_id), incumbent_ids)
+        if employee_id == data.manager_id:
+            if category != "leader_candidate" and employee_id != project.manager_id:
+                raise HTTPException(422, f"{person.name} 不是项目组长候选")
+        elif category != "member":
+            raise HTTPException(422, f"{person.name} 不是组员候选")
+
+    rows = await _rows(db, project_id)
+    before = {"manager_id": project.manager_id,
+              "member_ids": sorted(row.employee_id for row in rows if not row.is_leader_auto)}
+    desired = set(requested_ids)
+    existing = {row.employee_id: row for row in rows}
+    if project.manager_id != data.manager_id:
+        await record_project_leader_change(db, user, project, data.manager_id)
+    for row in rows:
+        if row.employee_id not in desired:
+            await db.delete(row)
+        else:
+            row.is_leader_auto = row.employee_id == data.manager_id
+    for employee_id in requested_ids:
+        if employee_id not in existing:
+            db.add(FieldProjectPendingMember(project_id=project_id, employee_id=employee_id,
+                is_leader_auto=employee_id == data.manager_id, created_by=user.id))
+    await db.flush()
+    after = {"manager_id": data.manager_id, "member_ids": sorted(data.member_ids)}
+    if before != after:
+        db.add(AuditLog(operator_id=user.id, operator_name=user.name, module="field",
+            action="confirm_pending_roster", resource_type="FieldProject", resource_id=project_id,
+            before_data=json.dumps(before, ensure_ascii=False),
+            after_data=json.dumps(after, ensure_ascii=False)))
+    current = await _rows(db, project_id)
+    return {"id": project_id, "manager_id": project.manager_id,
+            "member_ids": after["member_ids"], "pending_member_count": len(current),
+            "pending_members": [describe(row, people[row.employee_id].name) for row in current]}
 
 
 async def stage_members(db, user, project_id, employee_ids, *, is_leader_auto=False):

@@ -2937,6 +2937,12 @@ async def create_project_rule(
         db, current_user,
         SiteInput(project_id=project_id, name=project.name, address="", rule_id=rule.id),
     )
+    # save_site also supports older flows that keep a conflicting roster
+    # pending. For the first project rule, report the full conflict list and
+    # roll back the rule/site together instead of presenting a saved rule whose
+    # roster was never activated.
+    from app.services.field_pending import activate_members
+    await activate_members(db, current_user, project_id, fail_on_conflict=True)
     rule.location_id = site["location_id"]
     await db.flush()
     return rule

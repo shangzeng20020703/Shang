@@ -350,7 +350,7 @@
               <el-icon><Plus /></el-icon> 新建现场轮休规则
             </el-button>
             <el-button v-if="projectRuleMode && projectPendingMembers.length && selectedProject?.rule_id" :loading="projectActivationLoading" @click="activateProjectMembers">重试启用待配置人员（{{projectPendingMembers.length}}）</el-button>
-            <el-button v-if="projectRuleMode && projectRotationReady" type="primary" :disabled="!!projectPendingMembers.length" @click="router.push({path:'/rotation',query:{project_id:projectRuleId}})">打开本项目个人排班</el-button>
+            <el-button v-if="projectRuleMode && projectRotationReady" type="primary" :disabled="!!projectPendingMembers.length || !projectAssignedCount" @click="router.push({path:'/rotation',query:{project_id:projectRuleId}})">打开本项目个人排班</el-button>
             <el-select v-if="!projectRuleMode" v-model="ruleStatusFilter" placeholder="规则状态" clearable style="width: 140px" @change="fetchRules">
               <el-option label="启用" :value="true" />
               <el-option label="停用" :value="false" />
@@ -363,6 +363,8 @@
           <el-alert v-if="ruleLoadError && (projectRuleMode || canManageGlobalRules)" :title="ruleLoadError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectActivationError" :title="projectActivationError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectPendingMembers.length && !projectActivationError" :title="`${projectPendingMembers.length} 位人员待生效；全部启用后才能按本项目打卡和排班`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && projectAssignedCount" :title="`规则已保存，${projectAssignedCount} 位人员已启用；打开个人排班后将默认选中本周可排班人员`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && !projectAssignedCount" title="规则已保存，但项目暂无已启用人员；请返回项目库确认组长和组员名单" type="info" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectRuleMissing" title="当前项目尚未配置考勤规则" type="info" :closable="false" show-icon style="margin-bottom:12px" />
           <el-table v-if="projectRuleMode || canManageGlobalRules" :data="rules" v-loading="ruleLoading" class="modern-table" row-class-name="modern-row">
             <el-table-column prop="name" label="规则名称" min-width="180">
@@ -1147,8 +1149,8 @@
                   </el-checkbox-group>
                 </div>
                 <div v-if="ruleForm.extra.rule_type === 'rotation'" class="free-time-row">
-                  <span>不按星期限定日期。项目负责人在「现场轮休」按人员生成六上休一日历，预览并发布后生效。</span>
-                  <el-button link type="primary" @click="$router.push('/rotation')">打开个人排班</el-button>
+                  <span v-if="projectRuleMode">不按星期限定日期。先保存本项目规则并启用人员，再点击页面上的“打开本项目个人排班”预览和发布六上休一日历。</span>
+                  <span v-else>不按星期限定日期。规则关联项目并启用人员后，从项目库打开个人排班，预览和发布六上休一日历。</span>
                 </div>
                 <div class="free-time-row">
                   <div class="free-time-label">工作时长</div>
@@ -2767,10 +2769,12 @@ const canManageGlobalRules = computed(() => isWebAuthSuperuser() || getWebAuthRo
 const canManageProjectRules = computed(() => getWebAuthRoles().some(role => ['aftersales_manager','regional_lead'].includes(role)))
 const projectDirectory = ref<any[]>([])
 const projectPendingDirectory = ref<any[]>([])
+const projectAssignmentDirectory = ref<any[]>([])
 const projectDirectoryLoading = ref(false)
 const projectDirectoryError = ref('')
 const selectedProject = computed(() => projectDirectory.value.find(project => Number(project.id) === projectRuleId.value))
 const projectPendingMembers = computed(() => projectPendingDirectory.value.filter(member => Number(member.project_id) === projectRuleId.value))
+const projectAssignedCount = computed(() => new Set(projectAssignmentDirectory.value.filter(assignment => Number(assignment.project_id) === projectRuleId.value && assignment.status === 'active').map(assignment => Number(assignment.employee_id))).size)
 const projectRotationReady = computed(() => !!selectedProject.value?.rule_id && rules.value.some((rule: any) => Number(rule.id) === Number(selectedProject.value.rule_id) && rule.extra?.rule_type === 'rotation'))
 const projectActivationError = ref('')
 const projectActivationLoading = ref(false)
@@ -2797,9 +2801,11 @@ async function fetchProjectDirectory() {
     const result = await get('/field/directory')
     projectDirectory.value = Array.isArray(result?.projects) ? result.projects : []
     projectPendingDirectory.value = Array.isArray(result?.pending_members) ? result.pending_members : []
+    projectAssignmentDirectory.value = Array.isArray(result?.assignments) ? result.assignments : []
   } catch {
     projectDirectory.value = []
     projectPendingDirectory.value = []
+    projectAssignmentDirectory.value = []
     projectDirectoryError.value = '项目列表读取失败，请刷新重试'
   } finally {
     projectDirectoryLoading.value = false
@@ -6105,7 +6111,8 @@ async function submitRule() {
       await fetchProjectDirectory()
       await fetchRules()
       const activated = await activateProjectMembers()
-      if (activated) ElMessage.success('本项目专用规则已保存，人员已启用；可打开个人排班')
+      if (activated && projectAssignedCount.value) ElMessage.success(`本项目专用规则已保存，${projectAssignedCount.value} 位人员已启用；可打开个人排班`)
+      else if (activated) ElMessage.warning('规则已保存，但当前没有已启用人员；请在项目库确认人员配置')
       else ElMessage.warning('规则已保存；待配置人员仍有冲突，请处理后重试启用')
       return
     }
@@ -6137,6 +6144,10 @@ async function submitRule() {
     await fetchRules()
   } catch (e: any) {
     if (String(e?.message || '').includes('cancel')) return
+    if (projectRuleMode.value) {
+      projectActivationError.value = projectActivationMessage(e)
+      ElMessage.error(projectActivationError.value)
+    }
   } finally { ruleSubmitting.value = false }
 }
 

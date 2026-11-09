@@ -29,9 +29,8 @@ router.beforeEach(async to=>{
   clearWebAuthSession();return to.path==='/login'?true:'/login'
  }
  if(to.path==='/login')return getWebManagementSnapshotHomePath()
- // Project leaders have a management session for their own project's schedule,
- // not permission to enter the other management sections.
- if(getWebAuthRoles().includes('project_leader') && !['/field','/rotation'].includes(to.path))return '/rotation'
+ // Project leaders enter through the project library and can open their project's schedule there.
+ if(getWebAuthRoles().includes('project_leader') && !['/field','/rotation'].includes(to.path))return '/field'
  const roles=to.meta.roles as string[]|undefined
  if(roles && !isWebAuthSuperuser() && !getWebAuthRoles().some(r=>roles.includes(r)))return '/dashboard'
  return true
