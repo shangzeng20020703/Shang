@@ -11,7 +11,11 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models.audit_log import AuditLog
-from app.models.field_service import FieldCustomer, FieldProject, FieldProjectCatalog, FieldTegeneProject
+from app.models.employee import Employee
+from app.models.field_service import (
+    FieldCustomer, FieldProject, FieldProjectCatalog, FieldProjectPendingMember,
+    FieldSite, FieldTegeneProject,
+)
 from app.schemas.field_service import ProjectInput
 from app.services import field_service
 
@@ -144,6 +148,16 @@ async def link_project(db, user, external_id, data):
         local = await db.get(FieldProject, binding.project_id) if binding else existing
         if local is None:
             raise HTTPException(409, "Tegene 项目绑定的本地项目不存在，请管理员核对")
+        if local.manager_id is None:
+            if await db.scalar(select(FieldProjectPendingMember.id).where(
+                    FieldProjectPendingMember.project_id == local.id).limit(1)) or await db.scalar(
+                    select(FieldSite.id).where(FieldSite.project_id == local.id).limit(1)):
+                raise HTTPException(409, "项目已有人员或规则，请先核对项目组长")
+            leader = await db.get(Employee, data.manager_id)
+            if not leader or not leader.is_active or leader.status not in {"在职", "试用"}:
+                raise HTTPException(422, "项目组长须为在职人员")
+            from app.services.field_roles import record_project_leader_change
+            await record_project_leader_change(db, user, local, data.manager_id)
         # Refresh source-owned identity only. Local manager, switches, sites and shifts survive.
         local.code, local.name, local.customer_id = project["projectNo"], display_name, customer.id
         if not binding:
@@ -163,4 +177,8 @@ async def link_project(db, user, external_id, data):
                                            "code": project["projectNo"], "name": display_name,
                                            "source_name": project["name"]}, ensure_ascii=False)))
     await db.flush()
-    return {"project_id": binding.project_id, "synced_at": binding.synced_at}
+    actual_manager_id = await db.scalar(select(FieldProject.manager_id).where(
+        FieldProject.id == binding.project_id))
+    return {"project_id": binding.project_id, "synced_at": binding.synced_at,
+            "manager_id": actual_manager_id,
+            "manager_id_matches_request": actual_manager_id == data.manager_id}

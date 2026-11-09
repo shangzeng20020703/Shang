@@ -25,6 +25,10 @@ class CatalogProjectPromoteInput(BaseModel):
     manager_id: int = Field(gt=0)
 
 
+class ImportedProjectCustomerInput(BaseModel):
+    customer_id: int | None = Field(gt=0)
+
+
 class TegeneProjectInput(BaseModel):
     manager_id: int = Field(gt=0)
 

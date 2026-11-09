@@ -1,8 +1,8 @@
 """Review and import the four project columns from a location workbook.
 
-An imported row is a catalog entry, not an attendance rule or a fabricated
-customer/leader assignment. Project numbers connect it to existing local and
-read-only Tegene projects.
+Each imported code has a local project identity for role assignment and
+pre-rule scheduling. Import never fabricates a customer, leader or rule.
+Project numbers connect local identities to read-only Tegene projects.
 """
 
 import hashlib
@@ -19,7 +19,9 @@ from sqlalchemy import select
 
 from app.models.attendance import AttendanceRule
 from app.models.audit_log import AuditLog
-from app.models.field_service import FieldProject, FieldProjectCatalog, FieldSite
+from app.models.field_service import (
+    FieldProject, FieldProjectCatalog, FieldProjectPendingMember, FieldSite,
+)
 from app.schemas.field_service import ProjectInput
 from app.services.field_roles import role_names
 
@@ -269,6 +271,8 @@ async def list_catalog(db, user):
     allowed = await project_ids(db, user)
     rows = (await db.scalars(select(FieldProjectCatalog).order_by(FieldProjectCatalog.code))).all()
     catalog, projects, sites, rules = await _state(db, [row.code for row in rows])
+    pending_project_ids = set((await db.scalars(select(FieldProjectPendingMember.project_id).where(
+        FieldProjectPendingMember.project_id.in_([p.id for p in projects.values()])))).all())
     items = []
     for row in rows:
         project = projects.get(row.code)
@@ -285,7 +289,8 @@ async def list_catalog(db, user):
             AttendanceRecordService._configured_locations(rule, rule_extra))
         items.append({
             **data, "local_project_id": project.id if project else None,
-            "status": "staged" if not project else "configured" if rule else "pending_rule",
+            "status": ("staged" if not project else "configured" if rule else
+                       "pending_rule" if project.id in pending_project_ids else "pending_personnel"),
             "has_location": row.latitude is not None and row.longitude is not None,
             "active_rule_id": rule.id if rule else None,
             "active_rule_requires_gps": active_rule_requires_gps,
@@ -315,6 +320,7 @@ async def commit_import(db, user, content, filename, preview_token, confirm_acti
             raise HTTPException(422, f"{item['code']} 缺少有效坐标，不能更新其定位规则")
     existing, projects, sites, _ = await _state(db, [item["code"] for item in items])
     now = datetime.now(timezone.utc)
+    projects_created = 0
     for item in items:
         row = existing.get(item["code"]) or FieldProjectCatalog(code=item["code"])
         for key in FIELDS:
@@ -323,7 +329,13 @@ async def commit_import(db, user, content, filename, preview_token, confirm_acti
         row.imported_by = user.id
         db.add(row)
         project = projects.get(item["code"])
-        if project and project.name != item["name"]:
+        if project is None:
+            project = FieldProject(code=item["code"], name=item["name"],
+                                   customer_id=None, manager_id=None)
+            db.add(project)
+            projects[item["code"]] = project
+            projects_created += 1
+        elif project.name != item["name"]:
             old_name = project.name
             project.name = item["name"]
             site = sites.get(project.id)
@@ -341,7 +353,8 @@ async def commit_import(db, user, content, filename, preview_token, confirm_acti
         operator_id=user.id, operator_name=user.name, module="field",
         action="project_catalog_import", resource_type="field_project_catalog",
         after_data=json.dumps({"file_sha256": hashlib.sha256(content).hexdigest(),
-                               "rows": len(items), "approved_rule_project_ids": sorted(approved)},
+                               "rows": len(items), "projects_created": projects_created,
+                               "approved_rule_project_ids": sorted(approved)},
                               ensure_ascii=False),
     ))
     await db.flush()
@@ -349,6 +362,7 @@ async def commit_import(db, user, content, filename, preview_token, confirm_acti
         "created": preview["summary"]["create"],
         "updated": preview["summary"]["update"],
         "unchanged": preview["summary"]["unchanged"],
+        "projects_created": projects_created,
         "active_rules_updated": len(approved),
         "items": (await list_catalog(db, user))["items"],
     }
@@ -360,11 +374,24 @@ async def promote_catalog_project(db, user, code, customer_id, manager_id):
     catalog = await db.get(FieldProjectCatalog, code)
     if not catalog:
         raise HTTPException(404, "项目表中没有该编号")
-    if await db.scalar(select(FieldProject.id).where(FieldProject.code == code)):
-        raise HTTPException(409, "项目已进入售后项目库，请刷新页面")
+    project = await db.scalar(select(FieldProject).where(FieldProject.code == code))
+    if project:
+        # Compatibility for clients using the older two-step import screen.
+        # They may fill a missing customer later, but may not replace an
+        # appointed leader or change an already configured roster/rule.
+        has_configuration = bool(await db.scalar(select(FieldProjectPendingMember.id).where(
+                FieldProjectPendingMember.project_id == project.id).limit(1)) or await db.scalar(
+                select(FieldSite.id).where(FieldSite.project_id == project.id).limit(1)))
+        if has_configuration and project.manager_id != manager_id:
+            raise HTTPException(409, "项目已配置人员或规则，不能通过旧入口更换组长")
+        if (project.customer_id not in {None, customer_id}
+                or project.manager_id not in {None, manager_id}):
+            raise HTTPException(409, "项目资料已由其他操作更新，请刷新后核对")
     from app.services.field_service import save_project
-    project = await save_project(db, user, ProjectInput(
+    saved = await save_project(db, user, ProjectInput(
         code=code, name=catalog.name, customer_id=customer_id,
         manager_id=manager_id,
-    ))
-    return {"project_id": project["id"], "status": "pending_rule"}
+        description=project.description if project else "",
+        is_active=project.is_active if project else True,
+    ), item_id=project.id if project else None)
+    return {"project_id": saved["id"], "status": "pending_rule"}

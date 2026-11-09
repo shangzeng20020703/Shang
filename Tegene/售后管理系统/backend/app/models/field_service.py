@@ -37,7 +37,8 @@ class FieldProject(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     code: Mapped[str] = mapped_column(String(50), unique=True)
     name: Mapped[str] = mapped_column(String(150))
-    customer_id: Mapped[int] = mapped_column(ForeignKey("field_customers.id"))
+    # Imported projects are configurable before their customer record is known.
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("field_customers.id"), nullable=True)
     # A newly created local project can wait for its first project leader.
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")

@@ -1,10 +1,10 @@
 <template>
   <div v-loading="loading">
     <div class="page-intro">
-      <div><h1>项目库</h1><p>先确认项目人员，再确认个人排班，最后配置现场轮休规则。</p></div>
+      <div><h1>项目库</h1><p>分配项目负责范围、确认人员和个人排班后，再配置现场轮休规则。</p></div>
       <div><el-button v-if="canImportProjects" type="primary" plain @click="openProjectImport">导入项目与打卡位置</el-button><el-button v-if="canManageGlobalRules || canManageProjectRules" @click="router.push('/attendance?tab=rules')">配置考勤规则</el-button><el-button :loading="sourceLoading" @click="refresh">刷新项目</el-button></div>
     </div>
-    <div class="workflow"><span><b>1</b>确认项目人员</span><span><b>2</b>逐人确认排班</span><span><b>3</b>配置现场轮休规则</span><span><b>4</b>规则生效后打卡</span></div>
+    <div class="workflow"><span><b>1</b>分配区域组长</span><span><b>2</b>确认项目人员</span><span><b>3</b>逐人确认排班</span><span><b>4</b>配置现场轮休规则</span><span><b>5</b>规则生效后打卡</span></div>
     <el-alert v-if="error || sourceError || catalogError" :title="error || sourceError || catalogError" type="error" :closable="false" show-icon class="notice"/>
     <el-alert v-if="canManageGlobalRules && sourceConfigured === false" title="Tegene 项目来源尚未连接；已导入的项目表仍可查看和配置。" type="info" :closable="false" class="notice"/>
     <section class="surface">
@@ -19,8 +19,8 @@
         <el-table-column label="项目地点" min-width="180" show-overflow-tooltip><template #default="{row}"><span v-if="row.catalog_entry?.address">{{row.catalog_entry.address}}</span><span v-else-if="hasConfiguredProjectLocation(row)">表格未提供；规则已配置</span><span v-else-if="row.catalog_entry?.require_gps" class="location-missing">需在规则中设置</span><span v-else class="muted">未录入</span></template></el-table-column>
         <el-table-column label="定位" width="110"><template #default="{row}"><el-tag v-if="row.catalog_entry" :type="row.catalog_entry.require_gps ? (row.catalog_entry.has_location || hasConfiguredProjectLocation(row) ? 'success' : 'warning') : 'info'">{{row.catalog_entry.require_gps ? (hasConfiguredProjectLocation(row) && !row.catalog_entry.has_location ? '规则已配置' : '需要定位') : '无需定位'}}</el-tag><span v-else class="muted">按规则</span></template></el-table-column>
         <el-table-column label="项目组长" width="120"><template #default="{row}">{{row.manager_name || '待指定'}}</template></el-table-column>
-        <el-table-column label="考勤规则" min-width="180"><template #default="{row}"><span v-if="row.rule_name">{{row.rule_name}}</span><el-tag v-else type="info">{{row.catalog_only ? '项目待配置' : '待配置'}}</el-tag></template></el-table-column>
-        <el-table-column label="参与人员" min-width="205"><template #default="{row}"><template v-if="savedMemberCount(row)"><strong>已保存 {{savedMemberCount(row)}} 人</strong><div class="member-count-detail">{{row.member_count || 0}} 人已生效<span v-if="pendingCount(row)"> · {{pendingCount(row)}} 人{{row.rule_id ? '待启用' : '待排班及规则生效'}}</span><span v-if="!row.rule_id && row.pre_rule_schedule_ready"> · 个人排班已全部确认</span></div></template><span v-else class="muted">尚未分配</span></template></el-table-column>
+        <el-table-column label="考勤规则" min-width="180"><template #default="{row}"><span v-if="row.rule_name">{{row.rule_name}}</span><el-tag v-else type="info">{{projectStageLabel(row)}}</el-tag></template></el-table-column>
+        <el-table-column label="参与人员" min-width="205"><template #default="{row}"><template v-if="savedMemberCount(row)"><strong>已保存 {{savedMemberCount(row)}} 人</strong><div class="member-count-detail">{{row.member_count || 0}} 人已生效<span v-if="pendingCount(row)"> · {{pendingCount(row)}} 人{{row.rule_id ? '待启用' : '待排班及规则生效'}}</span><span v-if="!row.rule_id && row.pre_rule_schedule_ready"> · 个人排班已全部确认</span></div></template><span v-else class="muted">人员待确认</span></template></el-table-column>
         <el-table-column label="操作" width="115" fixed="right"><template #default="{row}"><el-button link type="primary" @click.stop="openProject(row)">{{canManage(row) ? '配置项目' : '查看项目'}}</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="rows.length" layout="prev, pager, next" class="pagination"/>
@@ -40,23 +40,25 @@
         <el-alert v-if="formError" :title="formError" type="error" :closable="false" show-icon class="notice"/>
         <el-alert v-if="selected.catalog_entry?.require_gps && !selected.catalog_entry?.has_location && !hasConfiguredProjectLocation(selected)" title="本项目需要定位，但表格没有有效位置。创建打卡规则时请手动设置地点和范围。" type="warning" :closable="false" show-icon class="notice"/>
         <section v-if="selected.catalog_entry" class="config-section"><h3>项目表中的地点</h3><p>{{selected.catalog_entry.address || (hasConfiguredProjectLocation(selected) ? '表格未提供；本项目规则已配置打卡位置' : '尚未录入地理位置') }} · {{selected.catalog_entry.require_gps ? '需要定位' : '无需定位'}}</p><p v-if="selected.catalog_entry.has_location" class="muted">坐标 {{selected.catalog_entry.latitude}}, {{selected.catalog_entry.longitude}}；新建本项目规则时会预填 300 米打卡范围。</p><p v-else-if="hasConfiguredProjectLocation(selected)" class="muted">实际打卡范围以本项目已保存的规则为准。</p><p v-if="selected.catalog_entry.rule_updates_pending" class="location-missing">已导入的新地点尚未应用到现有规则；请由有权限的人员核对后确认更新。</p></section>
-        <section v-if="selected.catalog_only" class="config-section">
-          <h3>补齐资料并配置项目</h3>
-          <p class="muted">表格只含项目编号、名称和地点。先选择客户和项目组长，项目建立后再确认组员、个人排班与打卡规则。</p>
+        <el-alert v-if="!selected.id" title="项目资料尚未同步到本地项目库，请刷新后重试。" type="warning" :closable="false" show-icon class="notice"/>
+        <div v-else>
+        <section class="config-section">
+          <h3>1. 区域组长负责范围</h3>
+          <p class="muted">售后经理可先分配主责或协管区域组长，再由获分配的区域组长确认项目人员。区域组长能查看所有项目，但只能修改自己负责的项目。</p>
           <el-form label-position="top">
-            <el-form-item label="客户"><el-select v-model="catalogPromote.customer_id" filterable placeholder="选择已有客户" :disabled="saving"><el-option v-for="customer in data.customers || []" :key="customer.id" :label="customer.name" :value="customer.id" :disabled="customer.is_active===false"/></el-select><div v-if="canImportProjects" class="customer-create"><el-input v-model="newCustomerName" maxlength="120" placeholder="没有客户时，在此输入新客户名称" :disabled="saving"/><el-button :loading="saving" :disabled="!newCustomerName.trim()" @click="createCatalogCustomer">新建客户</el-button></div></el-form-item>
-            <el-form-item label="项目组长"><el-select v-model="catalogPromote.manager_id" filterable placeholder="选择项目组长候选人" :disabled="saving"><el-option v-for="person in managers" :key="person.id" :label="`${person.name} · ${person.employee_no}`" :value="person.id" :disabled="person.is_active===false"/></el-select></el-form-item>
-            <el-button v-if="canImportProjects" type="primary" :loading="saving" :disabled="!catalogPromote.customer_id || !catalogPromote.manager_id" @click="promoteCatalogProject">确认项目基础资料</el-button>
-            <span v-else class="muted">请联系售后经理补齐资料。</span>
+            <div class="config-grid">
+              <el-form-item label="主责区域组长"><el-select v-model="regionalForm.primary_lead_id" clearable filterable placeholder="选择主责" :disabled="!data.can_assign_regionals || saving"><el-option v-for="p in regionalLeads" :key="p.id" :label="p.name" :value="p.id" /></el-select></el-form-item>
+              <el-form-item label="协管区域组长（可选）"><el-select v-model="regionalForm.assistant_lead_ids" multiple filterable placeholder="可留空" :disabled="!data.can_assign_regionals || saving"><el-option v-for="p in regionalLeads" :key="p.id" :label="p.name" :value="p.id" :disabled="p.id===regionalForm.primary_lead_id" /></el-select></el-form-item>
+            </div>
+            <el-button v-if="data.can_assign_regionals" type="primary" :loading="saving" @click="saveRegionalLeads">保存区域分配</el-button>
           </el-form>
         </section>
-        <div v-if="!selected.catalog_only">
         <div v-if="pendingMembers.length && !localProject?.rule_id" class="saved-roster notice">
           <el-alert :title="pendingRosterConfirmed ? `已确认人员配置：组长及${savedPendingGroupIds.length}名组员，共${savedMemberCount(localProject)}人；${localProject?.pre_rule_schedule_ready ? '每人排班均已确认，可建立规则' : '下一步逐人确认排班'}` : '已保存的人员名单有未确认修改，请再次确认人员配置'" :type="pendingRosterConfirmed ? 'success' : 'warning'" :closable="false" show-icon/>
           <el-button v-if="pendingRosterConfirmed" type="primary" @click="openRotation">{{localProject?.pre_rule_schedule_ready ? '查看已确认个人排班' : '下一步：逐人确认排班'}}</el-button>
         </div>
         <section class="config-section">
-          <h3>{{localProject?.rule_id ? '1. 指定项目组长' : '1. 确认项目人员'}}</h3>
+          <h3>{{localProject?.rule_id ? '2. 指定项目组长' : '2. 确认项目人员'}}</h3>
           <el-form label-position="top">
             <el-form-item label="项目组长（每项目一位）">
               <el-select v-model="config.manager_id" filterable placeholder="从项目组长候选人中选择" :disabled="!canManage(selected) || saving" style="max-width:420px">
@@ -97,7 +99,7 @@
           </el-table>
         </section>
         <section class="config-section">
-          <h3>2. 确认个人排班</h3>
+          <h3>3. 确认个人排班</h3>
           <template v-if="!localProject?.rule_id">
             <p class="muted">组长和组员分别选择起始日期及上六休一、上十二休二、上十八休三或自定义安排，并各自确认至少一个完整周期。可把未来项目未知的日期标为“待分配项目”；规则保存前只是待生效计划，不能打卡或攒休。</p>
             <el-alert v-if="localProject?.pre_rule_schedule_ready" :title="`个人排班已全部确认：${pendingMembers.length} 人；可建立现场轮休规则`" type="success" :closable="false" show-icon class="notice"/>
@@ -107,7 +109,7 @@
           <el-button type="primary" :disabled="!canOpenRotation" @click="openRotation">{{localProject?.rule_id ? '打开本项目个人排班' : '打开个人排班并逐人确认'}}</el-button>
         </section>
         <section class="config-section">
-          <h3>3. 建立本项目考勤规则</h3>
+          <h3>4. 建立本项目考勤规则</h3>
           <p v-if="chosenRule" class="rule-summary">{{chosenRule.name}} · {{ruleSummary(chosenRule)}}</p>
           <p v-if="!localProject?.rule_id" class="muted">组长和全部组员各自确认一个完整排班周期后，才能新建“现场轮休”规则并设置每日工时、打卡地点等要求。保存规则时统一校验并启用人员和属于本项目的待生效日期；有冲突会列出具体原因，整笔保持待配置。</p>
           <p v-else class="muted">本项目已有考勤规则。修改规则仅作用于本项目，原有打卡记录保留。</p>
@@ -119,15 +121,12 @@
           <p v-else-if="canManage(selected) && !localProject?.rule_id && !localProject?.pre_rule_schedule_ready" class="muted">请先在本项目的个人排班中逐人确认完整周期。</p>
           <el-alert v-if="activationError" :title="activationError" type="error" :closable="false" show-icon class="notice"/>
         </section>
-        <section class="config-section">
-          <h3>区域组长负责范围</h3>
-          <p class="muted">区域组长可以查看所有项目；只有被售后经理分配为主责或协管的项目可以修改。每个项目设置一位主责，协管可留空。</p>
-          <el-form label-position="top">
-            <div class="config-grid">
-              <el-form-item label="主责区域组长"><el-select v-model="regionalForm.primary_lead_id" clearable filterable placeholder="选择主责" :disabled="!data.can_assign_regionals || saving"><el-option v-for="p in regionalLeads" :key="p.id" :label="p.name" :value="p.id" /></el-select></el-form-item>
-              <el-form-item label="协管区域组长（可选）"><el-select v-model="regionalForm.assistant_lead_ids" multiple filterable placeholder="可留空" :disabled="!data.can_assign_regionals || saving"><el-option v-for="p in regionalLeads" :key="p.id" :label="p.name" :value="p.id" :disabled="p.id===regionalForm.primary_lead_id" /></el-select></el-form-item>
-            </div>
-            <el-button v-if="data.can_assign_regionals" type="primary" :loading="saving" :disabled="!selected.id" @click="saveRegionalLeads">保存区域分配</el-button>
+        <section v-if="selected.catalog_entry && !selected.external_id" class="config-section">
+          <h3>客户资料（可稍后补录）</h3>
+          <p class="muted">客户资料不影响人员确认、个人排班或打卡规则。当前客户：{{localProject?.customer_name || '尚未填写'}}</p>
+          <el-form v-if="canImportProjects" label-position="top">
+            <el-form-item label="客户"><el-select v-model="customerForm" filterable placeholder="可稍后选择" :disabled="saving"><el-option v-for="customer in data.customers || []" :key="customer.id" :label="customer.name" :value="customer.id" :disabled="customer.is_active===false"/></el-select><div class="customer-create"><el-input v-model="newCustomerName" maxlength="120" placeholder="没有客户时，在此输入新客户名称" :disabled="saving"/><el-button :loading="saving" :disabled="!newCustomerName.trim()" @click="createCatalogCustomer">新建客户</el-button></div></el-form-item>
+            <el-button type="primary" plain :loading="saving" :disabled="!customerForm || customerForm===localProject?.customer_id" @click="saveCatalogCustomer">保存客户资料</el-button>
           </el-form>
         </section>
         </div>
@@ -173,7 +172,7 @@
 <script setup lang="ts">
 import {ref, computed, onMounted, watch} from 'vue'
 import {useRouter} from 'vue-router'
-import {get, post, put, del} from '@/utils/request'
+import request, {get, post, put, del} from '@/utils/request'
 import {ElMessage, ElMessageBox} from 'element-plus'
 import {getWebAuthRoles,isWebAuthSuperuser} from '@/utils/authSession'
 const router = useRouter()
@@ -183,7 +182,7 @@ const loading=ref(false), saving=ref(false), error=ref(''), sourceError=ref(''),
 const catalogError=ref(''), importedCatalog=ref<any[]>([])
 const sourceProjects=ref<any[]>([]), query=ref(''), stage=ref('all'), page=ref(1), visible=ref(false), selected=ref<any>(null), formError=ref(''), activationError=ref(''), showHistory=ref(false)
 const config=ref<any>({manager_id:undefined, rule_id:undefined})
-const catalogPromote=ref<{customer_id:number|undefined,manager_id:number|undefined}>({customer_id:undefined,manager_id:undefined})
+const customerForm=ref<number|undefined>()
 const newCustomerName=ref('')
 const regionalForm=ref<{primary_lead_id:number|undefined,assistant_lead_ids:number[]}>({primary_lead_id:undefined,assistant_lead_ids:[]})
 const regionalPeople=ref<any[]>([])
@@ -231,6 +230,12 @@ const members=computed(()=>data.value.assignments.filter((a:any)=>a.project_id==
 const pendingMembers=computed<any[]>(()=>Array.isArray(data.value.pending_members)?data.value.pending_members.filter((a:any)=>a.project_id===selected.value?.id):[])
 function pendingCount(project:any){return Array.isArray(data.value.pending_members)?data.value.pending_members.filter((a:any)=>a.project_id===project.id).length:0}
 function savedMemberCount(project:any){return project ? (project.member_count || 0)+pendingCount(project) : 0}
+function projectStageLabel(project:any){
+  if(!project.id)return '资料同步中'
+  if(!savedMemberCount(project))return '人员待确认'
+  if(!project.pre_rule_schedule_ready)return '排班待确认'
+  return '规则待建立'
+}
 const memberCandidates=computed(()=>data.value.people.filter((p:any)=>p.is_active!==false && p.role==='employee' && p.field_staff_category==='member'))
 const managers=computed(()=>{
   const people=data.value.people.filter((p:any)=>p.role==='employee' && p.field_staff_category==='leader_candidate' && p.is_active!==false)
@@ -260,8 +265,7 @@ const canOpenRotation=computed(()=>Boolean(selected.value?.id && (selected.value
 const canOpenProjectRule=computed(()=>Boolean(selected.value?.id && (localProject.value?.rule_id ? !configDirty.value : pendingRosterConfirmed.value && localProject.value?.pre_rule_schedule_ready)))
 const memberAssignmentReady=computed(()=>Boolean(selected.value?.id && config.value.manager_id && !configDirty.value))
 function canManage(p:any){
-  if(!p || p.is_active===false)return false
-  if(p.catalog_only || !p.id)return canImportProjects.value
+  if(!p || p.is_active===false || !p.id)return false
   return p.can_manage ?? data.value.managed_project_ids.includes(p.id)
 }
 function memberState(a:any){return a.is_current?(a.can_punch?'参与中':rotationRuleReady.value?'待首次排班':'待生效'):a.start_date>today && a.status==='active'?'待参与':'已结束'}
@@ -284,7 +288,7 @@ async function refresh(){
   loading.value=true;error.value='';sourceError.value=''
   try{await loadLocal();await loadCatalog();if(canManageGlobalRules.value || canManageProjectRules.value){sourceLoading.value=true;try{const result=await get('/field/tegene/projects',undefined,upstreamConfig);sourceProjects.value=result.projects;sourceConfigured.value=result.configured}catch(e){sourceProjects.value=[];sourceError.value=message(e)+'；已配置的项目仍可使用。'}finally{sourceLoading.value=false}}}catch(e){error.value=message(e)}finally{loading.value=false}
 }
-function openProject(row:any){selected.value=row;config.value={manager_id:row.manager_id,rule_id:row.rule_id};catalogPromote.value={customer_id:row.customer_id || undefined,manager_id:row.manager_id || undefined};newCustomerName.value='';regionalForm.value={primary_lead_id:row.primary_regional_lead_id||undefined,assistant_lead_ids:[...(row.assistant_regional_lead_ids||[])]};memberForm.value={employee_ids:row.rule_id?[]:data.value.pending_members.filter((a:any)=>a.project_id===row.id && !a.is_leader_auto).map((a:any)=>a.employee_id)};showHistory.value=false;formError.value='';activationError.value='';visible.value=true}
+function openProject(row:any){selected.value=row;config.value={manager_id:row.manager_id,rule_id:row.rule_id};customerForm.value=row.customer_id || undefined;newCustomerName.value='';regionalForm.value={primary_lead_id:row.primary_regional_lead_id||undefined,assistant_lead_ids:[...(row.assistant_regional_lead_ids||[])]};memberForm.value={employee_ids:row.rule_id?[]:data.value.pending_members.filter((a:any)=>a.project_id===row.id && !a.is_leader_auto).map((a:any)=>a.employee_id)};showHistory.value=false;formError.value='';activationError.value='';visible.value=true}
 function openProjectRule(){if(!canOpenProjectRule.value)return;router.push({path:'/attendance',query:{tab:'rules',project_id:selected.value.id}})}
 function openRotation(){if(!canOpenRotation.value)return;router.push({path:'/rotation',query:{project_id:selected.value.id}})}
 async function saveRegionalLeads(){
@@ -375,30 +379,28 @@ function openTransfer(row:any){transferPerson.value=row;transferProject.value=un
 function addDays(day:string,n:number){const date=new Date(day+'T12:00:00Z');date.setUTCDate(date.getUTCDate()+n);return date.toISOString().slice(0,10)}
 async function transferMember(){saving.value=true;formError.value='';try{await post(`/field/assignments/${transferPerson.value.id}/transfer-requests`,{project_id:transferProject.value,effective_date:transferDate.value,reason:transferReason.value.trim()});await loadLocal();transferVisible.value=false;ElMessage.success('交接申请已提交，等待负责人确认')}catch(e){formError.value=message(e)}finally{saving.value=false}}
 async function reviewTransfer(row:any,approve:boolean){let note='';try{const result=await ElMessageBox.prompt(approve?'填写交接确认说明':'填写驳回原因','跨项目交接',{inputPlaceholder:'请填写原因',inputValidator:(value:string)=>!!value.trim()||'请填写原因'});note=result.value}catch{return}saving.value=true;try{await post(`/field/transfer-requests/${row.id}/review`,{approve,note:note.trim()});await loadLocal();ElMessage.success(approve?'已确认交接':'已驳回交接')}catch(e){error.value=message(e)}finally{saving.value=false}}
-async function promoteCatalogProject(){
-  if(!selected.value?.catalog_only || !catalogPromote.value.customer_id || !catalogPromote.value.manager_id)return
+async function saveCatalogCustomer(){
+  if(!selected.value?.id || !selected.value.catalog_entry || !canImportProjects.value || !customerForm.value)return
   saving.value=true;formError.value=''
-  const code=selected.value.code
   try{
-    const result=await post(`/field/projects/catalog/${encodeURIComponent(code)}/promote`,catalogPromote.value)
-    await refresh()
-    const row=catalog.value.find((project:any)=>project.id===result.project_id || project.code===code)
-    if(row)openProject(row)
-    ElMessage.success('项目基础资料已保存；下一步确认组员名单')
+    await request.patch(`/field/projects/${selected.value.id}/customer`,{customer_id:customerForm.value})
+    await loadLocal()
+    selected.value={...selected.value,...localProject.value}
+    ElMessage.success('客户资料已保存')
   }catch(e){formError.value=message(e)}finally{saving.value=false}
 }
 async function createCatalogCustomer(){
-  if(!selected.value?.catalog_only || !canImportProjects.value || !newCustomerName.value.trim())return
+  if(!selected.value?.id || !selected.value.catalog_entry || !canImportProjects.value || !newCustomerName.value.trim())return
   const name=newCustomerName.value.trim()
   const existing=(data.value.customers || []).find((customer:any)=>customer.is_active!==false && String(customer.name || '').trim()===name)
-  if(existing){catalogPromote.value.customer_id=existing.id;newCustomerName.value='';ElMessage.info('已选择同名客户');return}
+  if(existing){customerForm.value=existing.id;newCustomerName.value='';ElMessage.info('已选择同名客户');return}
   saving.value=true;formError.value=''
   try{
     const result=await post('/field/customers',{name,contact:'',phone:'',is_active:true})
     await loadLocal()
-    catalogPromote.value.customer_id=result.id
+    customerForm.value=result.id
     newCustomerName.value=''
-    ElMessage.success('客户已建立并选中，可继续配置项目')
+    ElMessage.success('客户已建立并选中，请点击“保存客户资料”')
   }catch(e){formError.value=message(e)}finally{saving.value=false}
 }
 function openProjectImport(){projectFile.value=null;projectImportReport.value=null;projectImportError.value='';confirmedRuleProjectIds.value=[];projectImportVisible.value=true}

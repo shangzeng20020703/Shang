@@ -2,12 +2,12 @@
 
 import argparse, asyncio, os
 from datetime import date, time, timedelta
-from sqlalchemy import select, update
+from sqlalchemy import inspect, select, update
 from app.core.database import Base, engine, async_session
 from app.core.config import settings
 import app.models
 import app.models.field_service
-from app.models.field_service import FieldSchemaVersion
+from app.models.field_service import FieldProject, FieldProjectCatalog, FieldSchemaVersion
 from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
 from app.models.organization import Department
@@ -22,10 +22,150 @@ def field(code, label, kind="text", required=True, **kw):
     return dict(code=code, label=label, field_type=kind, is_required=required, **kw)
 
 
+async def _project_columns(connection):
+    return {column["name"]: column for column in await connection.run_sync(
+        lambda sync_connection: inspect(sync_connection).get_columns("field_projects")
+    )}
+
+
+async def _migrate_project_nullable_columns():
+    """Allow catalog projects to exist before a customer or leader is assigned.
+
+    This is deliberately separate from create_all: create_all never changes an
+    existing column. MySQL DDL is not transactional, so each step is inspected
+    before execution and can be retried after an interrupted bootstrap.
+    """
+    async with engine.connect() as connection:
+        columns = await _project_columns(connection)
+        await connection.commit()
+        pending = [name for name in ("customer_id", "manager_id")
+                   if not columns[name]["nullable"]]
+        if not pending:
+            return
+        dialect = connection.dialect.name
+        if dialect == "sqlite":
+            expected = {"id", "code", "name", "customer_id", "manager_id",
+                        "description", "is_active"}
+            if set(columns) != expected:
+                raise RuntimeError("field_projects has unexpected columns; inspect before SQLite v16 migration")
+            def inspect_constraints(sync_connection):
+                inspector = inspect(sync_connection)
+                return (inspector.get_pk_constraint("field_projects"),
+                        inspector.get_unique_constraints("field_projects"),
+                        inspector.get_foreign_keys("field_projects"),
+                        inspector.get_check_constraints("field_projects"))
+
+            primary, unique, foreign, checks = await connection.run_sync(inspect_constraints)
+            unique_indexes = (await connection.exec_driver_sql(
+                "PRAGMA index_list('field_projects')")).all()
+            for index in unique_indexes:
+                if index[2]:
+                    escaped_name = str(index[1]).replace("'", "''")
+                    index_columns = (await connection.exec_driver_sql(
+                        f"PRAGMA index_info('{escaped_name}')")).all()
+                    if [column[2] for column in index_columns] != ["code"]:
+                        raise RuntimeError("field_projects has unexpected constraints; inspect before SQLite v16 migration")
+            expected_foreign = {
+                (("customer_id",), "field_customers", ("id",)),
+                (("manager_id",), "employees", ("id",)),
+            }
+            actual_foreign = {
+                (tuple(row["constrained_columns"]), row["referred_table"],
+                 tuple(row["referred_columns"])) for row in foreign
+            }
+            if (primary["constrained_columns"] != ["id"]
+                    or any(row["column_names"] != ["code"] for row in unique)
+                    or actual_foreign != expected_foreign
+                    or any(row.get("options") for row in foreign)
+                    or any(column.get("default") is not None for column in columns.values())
+                    or any(not row.get("sqltext") for row in checks)):
+                raise RuntimeError("field_projects has unexpected constraints; inspect before SQLite v16 migration")
+            quote = connection.dialect.identifier_preparer.quote
+            check_ddl = [
+                f"{('CONSTRAINT ' + quote(row['name']) + ' ') if row.get('name') else ''}"
+                f"CHECK ({row['sqltext']})"
+                for row in checks
+            ]
+            new_table_ddl = "CREATE TABLE _field_projects_v16 (\n" + ",\n".join([
+                "id INTEGER NOT NULL PRIMARY KEY",
+                "code VARCHAR(50) NOT NULL UNIQUE",
+                "name VARCHAR(150) NOT NULL",
+                "customer_id INTEGER",
+                "manager_id INTEGER",
+                "description TEXT NOT NULL",
+                "is_active BOOLEAN NOT NULL",
+                "FOREIGN KEY(customer_id) REFERENCES field_customers (id)",
+                "FOREIGN KEY(manager_id) REFERENCES employees (id)",
+                *check_ddl,
+            ]) + "\n)"
+            # SQLite cannot DROP NOT NULL. Rebuild under a real write transaction;
+            # foreign keys must be disabled before it starts because child tables
+            # already reference field_projects. IDs and the unique code survive.
+            await connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+            await connection.commit()
+            enabled = (await connection.exec_driver_sql("PRAGMA foreign_keys")).scalar_one()
+            await connection.commit()
+            if enabled:
+                raise RuntimeError("Could not suspend SQLite foreign keys for v16 migration")
+            try:
+                async with connection.begin():
+                    await connection.exec_driver_sql("BEGIN IMMEDIATE")
+                    # SQLite drops table-owned indexes and triggers with the
+                    # old table. Recreate explicit ones after the swap;
+                    # automatic UNIQUE(code) is recreated by the new DDL.
+                    custom_objects = (await connection.exec_driver_sql("""
+                        SELECT sql FROM sqlite_master
+                        WHERE tbl_name = 'field_projects'
+                          AND type IN ('index', 'trigger') AND sql IS NOT NULL
+                    """)).scalars().all()
+                    await connection.exec_driver_sql(new_table_ddl)
+                    await connection.exec_driver_sql("""
+                        INSERT INTO _field_projects_v16
+                            (id, code, name, customer_id, manager_id, description, is_active)
+                        SELECT id, code, name, customer_id, manager_id, description, is_active
+                        FROM field_projects
+                    """)
+                    await connection.exec_driver_sql("DROP TABLE field_projects")
+                    await connection.exec_driver_sql(
+                        "ALTER TABLE _field_projects_v16 RENAME TO field_projects")
+                    for ddl in custom_objects:
+                        await connection.exec_driver_sql(ddl)
+                    violations = (await connection.exec_driver_sql("PRAGMA foreign_key_check")).all()
+                    if violations:
+                        raise RuntimeError(f"SQLite foreign key check failed after v16 migration: {violations[:3]}")
+            finally:
+                await connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+                await connection.commit()
+            enabled = (await connection.exec_driver_sql("PRAGMA foreign_keys")).scalar_one()
+            violations = (await connection.exec_driver_sql("PRAGMA foreign_key_check")).all()
+            await connection.commit()
+            if not enabled or violations:
+                raise RuntimeError("SQLite foreign keys could not be verified after v16 migration")
+        elif dialect == "mysql":
+            quote = connection.dialect.identifier_preparer.quote
+            for name in pending:
+                sql_type = columns[name]["type"].compile(dialect=connection.dialect)
+                await connection.exec_driver_sql(
+                    f"ALTER TABLE {quote('field_projects')} MODIFY COLUMN {quote(name)} {sql_type} NULL")
+                await connection.commit()
+        elif dialect == "postgresql":
+            for name in pending:
+                await connection.exec_driver_sql(
+                    f'ALTER TABLE field_projects ALTER COLUMN "{name}" DROP NOT NULL')
+                await connection.commit()
+        else:
+            raise RuntimeError(f"Unsupported database for field schema v16: {dialect}")
+        result = await _project_columns(connection)
+        if any(not result[name]["nullable"] for name in ("customer_id", "manager_id")):
+            raise RuntimeError("field_projects nullable migration did not complete")
+        await connection.commit()
+
+
 async def initialize():
     # Additive tables: identity, project bindings, participation intervals and punch segments.
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    await _migrate_project_nullable_columns()
     async with async_session() as db:
         from app.services.field_membership import migrate_assignments
         await migrate_assignments(db)
@@ -33,7 +173,18 @@ async def initialize():
             # Retire legacy employment labels without unlocking any existing account.
             await db.execute(update(Employee).where(Employee.status.in_(["待入职", "停用"])).values(status="在职"))
             await db.execute(update(Employee).where(Employee.status == "试用期").values(status="试用"))
-        for version in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15):
+        # Earlier imports may have left catalog-only rows without a project ID.
+        # Backfill before stamping v16 so regional assignment and personnel
+        # confirmation work immediately after an upgrade.
+        catalog_rows = (await db.scalars(select(FieldProjectCatalog))).all()
+        existing_codes = set((await db.scalars(select(FieldProject.code))).all())
+        for row in catalog_rows:
+            if row.code not in existing_codes:
+                db.add(FieldProject(code=row.code, name=row.name,
+                                    customer_id=None, manager_id=None))
+                existing_codes.add(row.code)
+        await db.flush()
+        for version in range(1, 17):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

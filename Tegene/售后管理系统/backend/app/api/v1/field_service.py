@@ -9,6 +9,7 @@ from app.schemas.field_service import (
     CustomerInput,
     ProjectInput,
     CatalogProjectPromoteInput,
+    ImportedProjectCustomerInput,
     SiteInput,
     AssignmentInput,
     TegeneProjectInput,
@@ -67,6 +68,12 @@ async def promote_project_catalog(code: str, data: CatalogProjectPromoteInput,
                                   db=Depends(get_db), user=Depends(get_current_user)):
     from app.services.field_project_import import promote_catalog_project
     return await promote_catalog_project(db, user, code, data.customer_id, data.manager_id)
+
+
+@router.patch("/projects/{project_id}/customer")
+async def set_project_customer(project_id: int, data: ImportedProjectCustomerInput,
+                               db=Depends(get_db), user=Depends(get_current_user)):
+    return await service.set_imported_project_customer(db, user, project_id, data.customer_id)
 
 
 @router.get("/tegene/projects")

@@ -145,7 +145,7 @@ async def directory(db, user):
     )
     cs = select(FieldCustomer).order_by(FieldCustomer.id)
     if allowed is not None:
-        cs = cs.where(FieldCustomer.id.in_({p.customer_id for p in projects}))
+        cs = cs.where(FieldCustomer.id.in_({p.customer_id for p in projects if p.customer_id is not None}))
     customers = list((await db.scalars(cs)).all())
     stmt = (
         select(FieldAssignment)
@@ -266,7 +266,7 @@ async def directory(db, user):
         "projects": [
             {
                 **as_dict(p),
-                "customer_name": customer_map[p.customer_id].name,
+                "customer_name": customer_map[p.customer_id].name if p.customer_id in customer_map else "",
                 "manager_name": names.get(p.manager_id, ""),
                 "primary_regional_lead_id": next((r.employee_id for r in regional_map.get(p.id, []) if r.kind == "primary"), None),
                 "assistant_regional_lead_ids": [r.employee_id for r in regional_map.get(p.id, []) if r.kind == "assistant"],
@@ -417,6 +417,35 @@ async def save_project(db, user, data, item_id=None):
         from app.services.field_pending import sync_project_leader
         await sync_project_leader(db, user, obj, previous_manager_id)
     return as_dict(obj)
+
+
+async def set_imported_project_customer(db, user, project_id, customer_id):
+    """Fill or clear optional customer data without touching roster or rules."""
+    from app.services.field_roles import role_names
+    if not await role_names(db, user) & {"admin", "aftersales_manager"}:
+        raise HTTPException(403, "仅管理员和售后经理可维护导入项目客户")
+    project = await db.scalar(select(FieldProject).where(
+        FieldProject.id == project_id).with_for_update())
+    if project is None:
+        raise HTTPException(404, "项目不存在")
+    if not await db.get(FieldProjectCatalog, project.code):
+        raise HTTPException(422, "仅导入项目可在此维护客户")
+    if await db.scalar(select(FieldTegeneProject.id).where(
+            FieldTegeneProject.project_id == project_id).limit(1)):
+        raise HTTPException(409, "Tegene 项目的客户请在源系统维护后同步")
+    customer = await db.get(FieldCustomer, customer_id) if customer_id is not None else None
+    if customer_id is not None and (customer is None or not customer.is_active):
+        raise HTTPException(422, "客户无效")
+    before = project.customer_id
+    if before != customer_id:
+        project.customer_id = customer_id
+        db.add(AuditLog(operator_id=user.id, operator_name=user.name, module="field",
+            action="set_imported_project_customer", resource_type="FieldProject",
+            resource_id=project.id, before_data=json.dumps({"customer_id": before}),
+            after_data=json.dumps({"customer_id": customer_id})))
+        await db.flush()
+    return {"id": project.id, "customer_id": project.customer_id,
+            "customer_name": customer.name if customer else ""}
 
 
 async def save_site(db, user, data, item_id=None):
