@@ -17,7 +17,7 @@ from app.models.employee import Employee
 from app.models.audit_log import AuditLog
 from app.models.field_service import FieldAttendanceSegment, FieldProject
 from app.models.employee_role import EmployeeRole
-from app.models.rotation import RotationDay, RotationClaim, RotationAccount, RotationLedger
+from app.models.rotation import RotationDay, RotationDraftDay, RotationClaim, RotationAccount, RotationLedger
 from app.schemas.notification import NotificationCreate
 from app.services import field_service as field, field_roles
 from app.services.notification import NotificationService
@@ -57,9 +57,14 @@ async def member_on(db, employee_id, project_id, day):
 
 async def personal_cycle_start(db, employee_id, proposed):
     """A move to a different project never restarts an established personal cycle."""
-    anchor = await db.scalar(select(RotationDay.cycle_start).where(RotationDay.employee_id == employee_id)
-        .order_by(RotationDay.work_date, RotationDay.id).limit(1))
-    return anchor or proposed
+    published = (await db.execute(select(RotationDay.work_date, RotationDay.cycle_start)
+        .where(RotationDay.employee_id == employee_id)
+        .order_by(RotationDay.work_date, RotationDay.id).limit(1))).first()
+    draft = (await db.execute(select(RotationDraftDay.work_date, RotationDraftDay.cycle_start)
+        .where(RotationDraftDay.employee_id == employee_id)
+        .order_by(RotationDraftDay.work_date, RotationDraftDay.id).limit(1))).first()
+    earliest = min((entry for entry in (published, draft) if entry), key=lambda entry: entry[0], default=None)
+    return earliest[1] if earliest else proposed
 
 
 async def day_row(db, employee_id, day, project_id=None):
@@ -136,6 +141,9 @@ async def project_rule(db, user, project_id):
 
 
 async def preview(db, user, project_id, data):
+    from app.services import rotation_draft
+    if not await field.project_site(db, project_id):
+        return await rotation_draft.preview(db, user, project_id, data)
     rule = await project_rule(db, user, project_id)
     if data.start_date < max(today(), rule.effective_date):
         raise HTTPException(422, "周期排班须从今天或规则生效日之后开始，历史调整请使用调班申请")
@@ -172,6 +180,9 @@ async def preview(db, user, project_id, data):
 
 
 async def publish(db, user, project_id, data, revision):
+    from app.services import rotation_draft
+    if not await field.project_site(db, project_id):
+        return await rotation_draft.publish(db, user, project_id, data, revision)
     for eid in sorted(set(data.employee_ids)):
         await lock_person(db, eid)
     plan = await preview(db, user, project_id, data)
@@ -751,17 +762,25 @@ async def calendar(db, user, start, end, project_id=None, employee_id=None):
         employee_id = user.id
     eid = employee_id or (user.id if not managed and not all_projects else None)
     stmt = select(RotationDay).where(RotationDay.work_date >= start, RotationDay.work_date <= end)
+    draft_stmt = select(RotationDraftDay).where(RotationDraftDay.work_date >= start,
+        RotationDraftDay.work_date <= end)
     claims_stmt = select(RotationClaim)
     if project_id:
         stmt = stmt.where(RotationDay.project_id == project_id)
+        draft_stmt = draft_stmt.where(RotationDraftDay.project_id == project_id)
     if eid:
         stmt, claims_stmt = stmt.where(RotationDay.employee_id == eid), claims_stmt.where(RotationClaim.employee_id == eid)
+        draft_stmt = draft_stmt.where(RotationDraftDay.employee_id == eid)
     days = (await db.scalars(stmt.order_by(RotationDay.work_date, RotationDay.employee_id))).all()
+    draft_days = (await db.scalars(draft_stmt.order_by(RotationDraftDay.work_date,
+        RotationDraftDay.employee_id))).all()
     claims = [c for c in (await db.scalars(claims_stmt.order_by(RotationClaim.id.desc()))).all()
         if any(start.isoformat() <= d["date"] <= end.isoformat() and
             (project_id is None or project_id in {d.get("project_id", c.project_id), d.get("before_project_id")})
             for d in c.days)]
-    names = {p.id: p.name for p in (await db.scalars(select(Employee).where(Employee.id.in_({d.employee_id for d in days} | {c.employee_id for c in claims})))).all()}
+    names = {p.id: p.name for p in (await db.scalars(select(Employee).where(Employee.id.in_(
+        {d.employee_id for d in days} | {d.employee_id for d in draft_days} |
+        {c.employee_id for c in claims})))).all()}
     ledger_stmt = select(RotationLedger).join(RotationClaim, RotationLedger.claim_id == RotationClaim.id)
     if project_id:
         ledger_stmt = ledger_stmt.where(RotationLedger.claim_id.in_({c.id for c in claims} or {-1}))
@@ -773,7 +792,9 @@ async def calendar(db, user, start, end, project_id=None, employee_id=None):
     for claim in claims:
         item = await claim_view(db, claim, user, project_id if project_role == "project_leader" else None)
         claim_views.append(item)
+    from app.services.rotation_draft import draft_view
     return {"days": [{**day_view(d), "employee_name": names.get(d.employee_id)} for d in days],
+        "draft_days": [{**draft_view(d), "employee_name": names.get(d.employee_id)} for d in draft_days],
         "claims": claim_views, "ledger": [snapshot(l) for l in ledger],
         "balances": [{"employee_id": a.employee_id, "employee_name": names.get(a.employee_id), "days": a.units / 2} for a in accounts],
         "can_manage": managed or bool(roles & {"admin", "aftersales_manager"}), "labels": LABELS}

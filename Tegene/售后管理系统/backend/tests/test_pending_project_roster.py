@@ -31,6 +31,13 @@ from app.services.attendance import AttendanceRecordService
 from app.services.field_membership import punch_context
 
 
+def pre_rule_week(ids):
+    start = field_service.today()
+    end = start + timedelta(days=6 - start.weekday())
+    return {"employee_ids": ids, "start_date": str(start), "end_date": str(end),
+            "cycle_start": str(start), "member_days_only": True, "reason": "周期排班"}
+
+
 @pytest.mark.asyncio
 async def test_confirm_pending_roster_http_replaces_atomically_and_activates_after_rule():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -140,17 +147,17 @@ async def test_confirm_pending_roster_http_replaces_atomically_and_activates_aft
             project_leader = await client.put(url, json={"manager_id": 7, "member_ids": [4, 6]})
             assert project_leader.status_code == 403, project_leader.text
             current_user["id"] = 2
-            conflict = await client.post("/api/v1/attendance/projects/1/rule", json={
+            no_plan = await client.post("/api/v1/attendance/projects/1/rule", json={
                 "name": "轮休规则", "work_hour_type": "flexible", "work_hours_per_day": 12,
                 "effective_date": str(field_service.today()),
                 "extra_config": {"rule_type": "rotation", "scope_mode": "project",
                                  "project_id": 1, "free_work_hours_mode": "limit:12"},
             })
+            assert no_plan.status_code == 422, no_plan.text
+            conflict = await client.post("/api/v1/rotation/projects/1/preview",
+                                         json=pre_rule_week([3, 4, 5, 6]))
             assert conflict.status_code == 409, conflict.text
-            conflict_detail = conflict.json()["detail"]["conflicts"]
-            assert conflict_detail[0]["employee_name"] == "组员5"
-            assert conflict_detail[0]["project_name"] == "已有项目"
-            assert "已在其他项目" in conflict_detail[0]["reason"]
+            assert "其他项目" in conflict.text
             async with sessions() as db:
                 assert not await db.scalar(select(FieldSite.id).where(FieldSite.project_id == 1))
                 assert not await db.scalar(select(AttendanceRule.id).where(AttendanceRule.name == "轮休规则"))
@@ -164,6 +171,14 @@ async def test_confirm_pending_roster_http_replaces_atomically_and_activates_aft
             assert next(row for row in replaced.json()["pending_members"]
                         if row["employee_id"] == 7)["is_leader_auto"]
 
+            payload = pre_rule_week([4, 6, 7])
+            preview = await client.post("/api/v1/rotation/projects/1/preview", json=payload)
+            assert preview.status_code == 200, preview.text
+            confirmed = await client.post(
+                f"/api/v1/rotation/projects/1/publish?revision={preview.json()['revision']}", json=payload)
+            assert confirmed.status_code == 200, confirmed.text
+            assert confirmed.json()["phase"] == "pre_rule"
+
             created = await client.post("/api/v1/attendance/projects/1/rule", json={
                 "name": "轮休规则", "work_hour_type": "flexible", "work_hours_per_day": 12,
                 "effective_date": str(field_service.today()),
@@ -174,6 +189,7 @@ async def test_confirm_pending_roster_http_replaces_atomically_and_activates_aft
             after_rule = (await client.get("/api/v1/field/directory")).json()
             assert {row["employee_id"] for row in after_rule["assignments"]
                     if row["project_id"] == 1 and row["is_current"]} == {4, 6, 7}
+            assert {row["employee_id"] for row in after_rule["pending_members"]} == set()
             blocked = await client.put(url, json={"manager_id": 3, "member_ids": [4, 5]})
             assert blocked.status_code == 409, blocked.text
             async with sessions() as db:
@@ -306,6 +322,15 @@ async def test_saved_four_person_roster_survives_reload_and_activates_for_rotati
             assert {row["employee_name"] for row in before_rule["pending_members"]} == {
                 "测试组长", "测试组员1", "测试组员2", "测试组员3"}
 
+            payload = pre_rule_week([2, 3, 4, 5])
+            preview = await client.post("/api/v1/rotation/projects/1/preview", json=payload)
+            assert preview.status_code == 200, preview.text
+            confirmed = await client.post(
+                f"/api/v1/rotation/projects/1/publish?revision={preview.json()['revision']}", json=payload)
+            assert confirmed.status_code == 200, confirmed.text
+            prepared = (await client.get("/api/v1/field/directory")).json()
+            assert next(row for row in prepared["projects"] if row["id"] == 1)["pre_rule_schedule_ready"]
+
             created = await client.post("/api/v1/attendance/projects/1/rule", json={
                 "name": "现场轮休", "work_hour_type": "flexible", "work_hours_per_day": 12,
                 "effective_date": str(field_service.today()),
@@ -322,7 +347,7 @@ async def test_saved_four_person_roster_survives_reload_and_activates_for_rotati
             assert {row["employee_id"] for row in after_rule["assignments"]
                     if row["project_id"] == 1 and row["is_current"]} == {2, 3, 4, 5}
 
-            tomorrow = field_service.today() + timedelta(days=1)
+            tomorrow = field_service.today() + timedelta(days=7 - field_service.today().weekday())
             preview = await client.post("/api/v1/rotation/projects/1/preview", json={
                 "employee_ids": [2, 3, 4, 5], "start_date": str(tomorrow),
                 "end_date": str(tomorrow), "cycle_start": str(tomorrow),
@@ -421,8 +446,13 @@ async def test_pre_rule_roster_leader_atomic_activation_and_rotation_punch_gate(
                               "project_id": 1, "free_work_hours_mode": "limit:12"})
             db.add(rotation_rule)
             await db.flush()
-            await field_service.save_site(db, manager,
-                SiteInput(project_id=1, name="待配置项目", rule_id=3))
+            # Simulate an already-installed legacy rotation site. First-time
+            # site creation now requires a confirmed personal week.
+            db.add(Location(id=3, name="待配置项目"))
+            await db.flush()
+            db.add(FieldSite(id=3, project_id=1, name="待配置项目", location_id=3, rule_id=3))
+            await db.flush()
+            await field_pending.activate_members(db, manager, 1, fail_on_conflict=False)
             # Automatic activation found one conflict and activated nobody.
             assert not (await db.scalars(select(FieldAssignment).where(
                 FieldAssignment.site_id != 2))).all()
@@ -487,8 +517,12 @@ async def test_future_rule_effective_date_keeps_participation_inactive_today():
                 extra_config={"rule_type": "rotation", "scope_mode": "project",
                               "project_id": 1, "free_work_hours_mode": "limit:8"}))
             await db.flush()
-            await field_service.save_site(db, manager,
-                SiteInput(project_id=1, name="未来生效项目", rule_id=1))
+            # Legacy sites can still be activated against a future rule.
+            db.add(Location(id=1, name="未来生效项目"))
+            await db.flush()
+            db.add(FieldSite(id=1, project_id=1, name="未来生效项目", location_id=1, rule_id=1))
+            await db.flush()
+            await field_pending.activate_members(db, manager, 1)
             view = await field_service.directory(db, member)
             assert view["pending_members"] == []
             assert len(view["assignments"]) == 1

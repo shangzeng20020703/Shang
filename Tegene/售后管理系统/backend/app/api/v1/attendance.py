@@ -2919,6 +2919,17 @@ async def create_project_rule(
     if await field_service.project_site(db, project_id):
         raise HTTPException(409, "项目已有考勤规则，请在项目规则中修改")
 
+    from app.models.rotation import RotationDraftDay
+    from app.services import rotation_draft
+    from sqlalchemy import select
+    rotation_mode = (data.extra_config or {}).get("rule_type") == "rotation"
+    has_drafts = await db.scalar(select(RotationDraftDay.id).where(
+        RotationDraftDay.project_id == project_id).limit(1))
+    if has_drafts and not rotation_mode:
+        raise HTTPException(422, "本项目已有待生效个人轮休排班，请选择“现场轮休”规则")
+    if rotation_mode:
+        await rotation_draft.require_ready(db, project_id)
+
     payload = data.model_dump()
     # Project managers cannot turn a project write into an organisation-wide
     # rule by supplying a different scope or department in the request body.
@@ -2937,12 +2948,8 @@ async def create_project_rule(
         db, current_user,
         SiteInput(project_id=project_id, name=project.name, address="", rule_id=rule.id),
     )
-    # save_site also supports older flows that keep a conflicting roster
-    # pending. For the first project rule, report the full conflict list and
-    # roll back the rule/site together instead of presenting a saved rule whose
-    # roster was never activated.
-    from app.services.field_pending import activate_members
-    await activate_members(db, current_user, project_id, fail_on_conflict=True)
+    # save_site validates, activates and publishes the first rotation plan in
+    # this transaction, including callers that bind a rule via /field/sites.
     rule.location_id = site["location_id"]
     await db.flush()
     return rule

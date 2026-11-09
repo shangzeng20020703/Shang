@@ -1,10 +1,10 @@
 <template>
   <div v-loading="loading">
     <div class="page-intro">
-      <div><h1>项目库</h1><p>先分配项目人员，再建立现场轮休规则，最后按周发布个人排班。</p></div>
+      <div><h1>项目库</h1><p>先确认项目人员，再确认个人排班，最后配置现场轮休规则。</p></div>
       <div><el-button v-if="canManageGlobalRules || canManageProjectRules" @click="router.push('/attendance?tab=rules')">配置考勤规则</el-button><el-button :loading="sourceLoading" @click="refresh">刷新项目</el-button></div>
     </div>
-    <div class="workflow"><span><b>1</b>选择项目并分配人员</span><span><b>2</b>新建现场轮休规则</span><span><b>3</b>预览个人排班</span><span><b>4</b>按周发布</span></div>
+    <div class="workflow"><span><b>1</b>确认项目人员</span><span><b>2</b>确认首周全员排班</span><span><b>3</b>配置现场轮休规则</span><span><b>4</b>规则生效后打卡</span></div>
     <el-alert v-if="error || sourceError" :title="error || sourceError" type="error" :closable="false" show-icon class="notice"/>
     <el-alert v-if="canManageGlobalRules && sourceConfigured === false" title="项目来源尚未连接，请联系管理员配置 Tegene 读取凭据。" type="info" :closable="false" class="notice"/>
     <section class="surface">
@@ -18,7 +18,7 @@
         <el-table-column prop="name" label="项目名称" min-width="260"/>
         <el-table-column label="项目组长" width="120"><template #default="{row}">{{row.manager_name || '待指定'}}</template></el-table-column>
         <el-table-column label="考勤规则" min-width="180"><template #default="{row}"><span v-if="row.rule_name">{{row.rule_name}}</span><el-tag v-else type="info">待配置</el-tag></template></el-table-column>
-        <el-table-column label="参与人员" min-width="205"><template #default="{row}"><template v-if="savedMemberCount(row)"><strong>已保存 {{savedMemberCount(row)}} 人</strong><div class="member-count-detail">{{row.member_count || 0}} 人已生效<span v-if="pendingCount(row)"> · {{pendingCount(row)}} 人{{row.rule_id ? '待启用' : '待建立规则后启用'}}</span></div></template><span v-else class="muted">尚未分配</span></template></el-table-column>
+        <el-table-column label="参与人员" min-width="205"><template #default="{row}"><template v-if="savedMemberCount(row)"><strong>已保存 {{savedMemberCount(row)}} 人</strong><div class="member-count-detail">{{row.member_count || 0}} 人已生效<span v-if="pendingCount(row)"> · {{pendingCount(row)}} 人{{row.rule_id ? '待启用' : '待排班及规则生效'}}</span><span v-if="!row.rule_id && row.pre_rule_schedule_ready"> · 首周全员排班已确认</span></div></template><span v-else class="muted">尚未分配</span></template></el-table-column>
         <el-table-column label="操作" width="115" fixed="right"><template #default="{row}"><el-button link type="primary" @click.stop="openProject(row)">{{canManage(row) ? '配置项目' : '查看项目'}}</el-button></template></el-table-column>
       </el-table>
       <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="rows.length" layout="prev, pager, next" class="pagination"/>
@@ -37,8 +37,8 @@
         <div class="project-heading"><span class="muted">{{selected.code}}</span><h2>{{selected.name}}</h2></div>
         <el-alert v-if="formError" :title="formError" type="error" :closable="false" show-icon class="notice"/>
         <div v-if="pendingMembers.length && !localProject?.rule_id" class="saved-roster notice">
-          <el-alert :title="pendingRosterConfirmed ? `已确认人员配置：组长及${savedPendingGroupIds.length}名组员，共${savedMemberCount(localProject)}人；待建立规则后启用` : '已保存的人员名单有未确认修改，请确认人员配置后再建立规则'" :type="pendingRosterConfirmed ? 'success' : 'warning'" :closable="false" show-icon/>
-          <el-button v-if="canManage(selected) && pendingRosterConfirmed" type="primary" @click="openProjectRule">下一步：新建现场轮休规则</el-button>
+          <el-alert :title="pendingRosterConfirmed ? `已确认人员配置：组长及${savedPendingGroupIds.length}名组员，共${savedMemberCount(localProject)}人；${localProject?.pre_rule_schedule_ready ? '首周全员排班已确认，可建立规则' : '下一步确认首周全员排班'}` : '已保存的人员名单有未确认修改，请再次确认人员配置'" :type="pendingRosterConfirmed ? 'success' : 'warning'" :closable="false" show-icon/>
+          <el-button v-if="pendingRosterConfirmed" type="primary" @click="openRotation">{{localProject?.pre_rule_schedule_ready ? '查看已确认个人排班' : '下一步：确认个人排班'}}</el-button>
         </div>
         <section class="config-section">
           <h3>{{localProject?.rule_id ? '1. 指定项目组长' : '1. 确认项目人员'}}</h3>
@@ -50,7 +50,7 @@
             </el-form-item>
             <template v-if="!localProject?.rule_id">
               <el-form-item label="项目组员（可多选）"><el-select v-model="memberForm.employee_ids" multiple filterable placeholder="仅显示组员候选人" :disabled="!canManage(selected) || saving"><el-option v-for="p in memberCandidates" :key="p.id" :value="p.id" :label="`${p.name} · ${p.phone || p.employee_no}`"/></el-select></el-form-item>
-              <p class="muted">一次确认组长及完整组员名单；项目组长会自动加入。再次确认会以当前选择替换原待配置组员。建立规则并启用前，人员不能按本项目打卡。</p>
+              <p class="muted">一次确认组长及完整组员名单；项目组长会自动加入。再次确认会以当前选择替换原待配置组员。已确认排班的人员不能直接移出，请先处理其排班；规则生效前不能按本项目打卡。</p>
               <el-button v-if="canManage(selected)" type="primary" :loading="saving" :disabled="!config.manager_id || !memberForm.employee_ids.length" @click="confirmPendingRoster">确认人员配置</el-button>
               <span v-if="pendingRosterConfirmed" class="muted roster-confirmed">人员配置已确认，刷新后仍会保留。</span>
             </template>
@@ -71,8 +71,8 @@
           </template>
           <el-table v-if="pendingMembers.length" :data="pendingMembers" class="field-table" empty-text="暂无待配置人员">
             <el-table-column prop="employee_name" label="待配置人员" width="150"/>
-            <el-table-column label="状态"><template #default>{{localProject?.rule_id ? '名单已保存，待统一启用；尚不能打卡' : '名单已保存，待建立规则后启用；尚不能打卡'}}</template></el-table-column>
-            <el-table-column v-if="canManage(selected)" label="操作" width="170"><template #default="{row}"><span v-if="row.is_leader_auto" class="muted">更换组长后自动更新</span><span v-else-if="!localProject?.rule_id" class="muted">在上方取消选择后确认</span><el-button v-else link type="danger" :disabled="saving" @click="removePendingMember(row)">移出</el-button></template></el-table-column>
+            <el-table-column label="状态"><template #default>{{localProject?.rule_id ? '名单已保存，待统一启用；尚不能打卡' : '名单已保存，待确认排班并建立规则；尚不能打卡'}}</template></el-table-column>
+            <el-table-column v-if="canManage(selected)" label="操作" width="190"><template #default="{row}"><el-button v-if="!localProject?.rule_id && draftEmployeeIds.has(Number(row.employee_id))" link type="warning" :disabled="saving" @click="revokePreRuleSchedule(row)">撤销待生效排班</el-button><span v-else-if="row.is_leader_auto" class="muted">更换组长后自动更新</span><span v-else-if="!localProject?.rule_id" class="muted">在上方取消选择后确认</span><el-button v-else link type="danger" :disabled="saving" @click="removePendingMember(row)">移出</el-button></template></el-table-column>
           </el-table>
           <el-table :data="members" empty-text="暂无参与人员" class="field-table">
             <el-table-column prop="employee_name" label="人员" width="120"/>
@@ -82,21 +82,27 @@
           </el-table>
         </section>
         <section class="config-section">
-          <h3>2. 建立本项目考勤规则</h3>
+          <h3>2. 确认个人排班</h3>
+          <template v-if="!localProject?.rule_id">
+            <p class="muted">按北京时间周一至周日，先为组长和全部组员预览六上休一安排，再确认至少一个共同的未来周。本周只需确认今天至周日。此时排班是待生效计划，不能打卡；保存规则后仅今天及未来的计划才正式生效，已过去日期不转为打卡或考勤。</p>
+            <el-alert v-if="localProject?.pre_rule_schedule_ready" :title="`首周全员排班已确认：${pendingMembers.length} 人；可建立现场轮休规则`" type="success" :closable="false" show-icon class="notice"/>
+            <el-alert v-else-if="pendingRosterConfirmed" :title="`当前可建规则的共同周已确认 ${localProject?.pre_rule_schedule_member_count || 0} / ${pendingMembers.length} 人${localProject?.pre_rule_schedule_week_start ? `（周一 ${localProject.pre_rule_schedule_week_start} 起）` : ''}；仍需确认：${pendingScheduleMissingNames}`" type="warning" :closable="false" show-icon class="notice"/>
+          </template>
+          <p v-else class="muted">规则已配置，可查看个人排班和申请后续调整。</p>
+          <el-button type="primary" :disabled="!canOpenRotation" @click="openRotation">{{localProject?.rule_id ? '打开本项目个人排班' : '打开个人排班并确认首周'}}</el-button>
+        </section>
+        <section class="config-section">
+          <h3>3. 建立本项目考勤规则</h3>
           <p v-if="chosenRule" class="rule-summary">{{chosenRule.name}} · {{ruleSummary(chosenRule)}}</p>
-          <p v-if="!localProject?.rule_id" class="muted">请新建规则并选择“现场轮休”，设置每日工时、打卡地点等要求。保存后待配置人员会统一生效；若有冲突，会列出人员供你处理。</p>
+          <p v-if="!localProject?.rule_id" class="muted">首周组长和全部组员的排班确认后，才能新建“现场轮休”规则并设置每日工时、打卡地点等要求。保存规则时统一校验并启用人员和待生效排班；有冲突会列出具体原因，整笔保持待配置。</p>
           <p v-else class="muted">本项目已有考勤规则。修改规则仅作用于本项目，原有打卡记录保留。</p>
           <div class="member-actions">
             <el-button v-if="canManage(selected)" type="primary" :disabled="!canOpenProjectRule" @click="openProjectRule">{{localProject?.rule_id ? '编辑本项目规则' : '新建现场轮休规则'}}</el-button>
             <el-button v-if="canManage(selected) && localProject?.rule_id && pendingMembers.length" :loading="saving" @click="activatePendingMembers">重试启用待配置人员</el-button>
           </div>
-          <p v-if="canManage(selected) && !localProject?.rule_id && !pendingRosterConfirmed" class="muted">请先在上方选择项目组长和至少一名组员，点击“确认人员配置”，再新建规则。</p>
+          <p v-if="canManage(selected) && !localProject?.rule_id && !pendingRosterConfirmed" class="muted">请先在上方选择项目组长和至少一名组员，点击“确认人员配置”。</p>
+          <p v-else-if="canManage(selected) && !localProject?.rule_id && !localProject?.pre_rule_schedule_ready" class="muted">请先在本项目的个人排班中确认组长和全部组员的共同首周安排。</p>
           <el-alert v-if="activationError" :title="activationError" type="error" :closable="false" show-icon class="notice"/>
-        </section>
-        <section class="config-section">
-          <h3>3. 个人排班</h3>
-          <p class="muted">本项目人员生效后，打开个人排班。按北京时间周一至周日预览六上休一建议，调整后逐周确认发布。</p>
-          <el-button type="primary" :disabled="!rotationRuleReady || !activeMemberCount || !!pendingMembers.length" @click="openRotation">打开本项目个人排班</el-button>
         </section>
         <section class="config-section">
           <h3>区域组长负责范围</h3>
@@ -185,7 +191,14 @@ const pendingRosterDirty=computed(()=>{
   return config.value.manager_id!==localProject.value.manager_id || selectedIds.length!==savedPendingGroupIds.value.length || selectedIds.some((id,index)=>id!==savedPendingGroupIds.value[index])
 })
 const pendingRosterConfirmed=computed(()=>Boolean(localProject.value?.manager_id && savedPendingGroupIds.value.length && !pendingRosterDirty.value))
-const canOpenProjectRule=computed(()=>Boolean(selected.value?.id && (localProject.value?.rule_id ? !configDirty.value : pendingRosterConfirmed.value)))
+const pendingScheduleMissingNames=computed(()=>{
+  const ids=Array.isArray(localProject.value?.pre_rule_schedule_missing_member_ids) ? localProject.value.pre_rule_schedule_missing_member_ids : []
+  if(!ids.length)return pendingMembers.value.map((row:any)=>row.employee_name || `人员${row.employee_id}`).join('、') || '全部人员'
+  return ids.map((id:number)=>pendingMembers.value.find((row:any)=>Number(row.employee_id)===Number(id))?.employee_name || `人员${id}`).join('、')
+})
+const draftEmployeeIds=computed(()=>new Set<number>(Array.isArray(localProject.value?.pre_rule_schedule_employee_ids) ? localProject.value.pre_rule_schedule_employee_ids.map(Number) : []))
+const canOpenRotation=computed(()=>Boolean(selected.value?.id && (selected.value?.can_schedule ?? canManage(selected.value)) && (localProject.value?.rule_id ? rotationRuleReady.value && activeMemberCount.value > 0 && !pendingMembers.value.length : pendingRosterConfirmed.value)))
+const canOpenProjectRule=computed(()=>Boolean(selected.value?.id && (localProject.value?.rule_id ? !configDirty.value : pendingRosterConfirmed.value && localProject.value?.pre_rule_schedule_ready)))
 const memberAssignmentReady=computed(()=>Boolean(selected.value?.id && config.value.manager_id && !configDirty.value))
 function canManage(p:any){return p && p.is_active!==false && (p.can_manage ?? (data.value.can_manage || data.value.managed_project_ids.includes(p.id)))}
 function memberState(a:any){return a.is_current?(a.can_punch?'参与中':rotationRuleReady.value?'待首次排班':'待生效'):a.start_date>today && a.status==='active'?'待参与':'已结束'}
@@ -205,7 +218,7 @@ async function refresh(){
 }
 function openProject(row:any){selected.value=row;config.value={manager_id:row.manager_id,rule_id:row.rule_id};regionalForm.value={primary_lead_id:row.primary_regional_lead_id||undefined,assistant_lead_ids:[...(row.assistant_regional_lead_ids||[])]};memberForm.value={employee_ids:row.rule_id?[]:data.value.pending_members.filter((a:any)=>a.project_id===row.id && !a.is_leader_auto).map((a:any)=>a.employee_id)};showHistory.value=false;formError.value='';activationError.value='';visible.value=true}
 function openProjectRule(){if(!canOpenProjectRule.value)return;router.push({path:'/attendance',query:{tab:'rules',project_id:selected.value.id}})}
-function openRotation(){if(!rotationRuleReady.value || pendingMembers.value.length)return;router.push({path:'/rotation',query:{project_id:selected.value.id}})}
+function openRotation(){if(!canOpenRotation.value)return;router.push({path:'/rotation',query:{project_id:selected.value.id}})}
 async function saveRegionalLeads(){
   if(!selected.value?.id)return
   saving.value=true;formError.value=''
@@ -242,7 +255,7 @@ async function confirmPendingRoster(){
     config.value={manager_id:saved.manager_id,rule_id:saved.rule_id}
     memberForm.value={employee_ids:[...savedPendingGroupIds.value]}
     selected.value={...selected.value,...saved}
-    ElMessage.success('项目人员配置已确认；下一步可建立现场轮休规则')
+    ElMessage.success('项目人员配置已确认；下一步请确认个人排班')
   }catch{ElMessage.warning('人员配置已确认，但列表刷新失败；请点击“刷新项目”核对')}
   finally{saving.value=false}
 }
@@ -251,7 +264,7 @@ async function addMembers(){
   try{await post(`/field/projects/${selected.value.id}/members`,{employee_ids:memberForm.value.employee_ids})}
   catch(e){formError.value=message(e);saving.value=false;return}
   memberForm.value={employee_ids:[]}
-  try{await loadLocal();ElMessage.success(localProject.value?.rule_id?'人员已加入项目':`人员名单已保存：共${savedMemberCount(localProject.value)}人，待建立规则后启用`)}
+  try{await loadLocal();ElMessage.success(localProject.value?.rule_id?'人员已加入项目':`人员名单已保存：共${savedMemberCount(localProject.value)}人，下一步确认个人排班`)}
   catch{ElMessage.warning('人员名单已保存，但列表刷新失败；请点击“刷新项目”核对')}
   finally{saving.value=false}
 }
@@ -259,6 +272,16 @@ async function removePendingMember(row:any){
   saving.value=true;formError.value=''
   try{await del(`/field/projects/${selected.value.id}/pending-members/${row.id}`);await loadLocal();ElMessage.success('已移出待配置人员')}
   catch(e){formError.value=message(e)}finally{saving.value=false}
+}
+async function revokePreRuleSchedule(row:any){
+  if(!selected.value?.id || localProject.value?.rule_id)return
+  try{await ElMessageBox.confirm(`撤销 ${row.employee_name} 的全部待生效排班？撤销后可重新确认人员名单。`,'撤销待生效排班',{type:'warning'})}catch{return}
+  saving.value=true;formError.value=''
+  try{
+    const result:any=await del(`/rotation/projects/${selected.value.id}/draft-days`,{params:{employee_id:row.employee_id}})
+    await loadLocal()
+    ElMessage.success(`已撤销 ${result?.count || 0} 个人日；请重新核对首周全员排班`)
+  }catch(e){formError.value=activationConflictMessage(e)}finally{saving.value=false}
 }
 function activationConflictMessage(e:any){
   const detail=e.response?.data?.detail

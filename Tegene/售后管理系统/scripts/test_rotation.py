@@ -59,7 +59,7 @@ async def main():
             tokens[who] = (await req("POST", "/auth/login", who, json={"phone": f"1990000000{i}", "password": "Demo-AfterSales-2026!"}))["access_token"]
         directory = await req("GET", "/field/directory")
         base = directory["projects"][0]
-        person = await req("POST", "/field/people", json={"name":"轮休验收工程师", "phone":"19911112222", "employee_no":"ROT-QA", "role":"employee"})
+        person = await req("POST", "/field/people", json={"name":"轮休验收工程师", "phone":"19911112222", "employee_no":"ROT-QA", "role":"employee", "field_staff_category":"member"})
         eid = person["id"]
         lead = await req("POST", "/field/people", json={"name":"轮休验收组长", "phone":"19911118888", "employee_no":"ROT-LEAD", "role":"employee", "field_staff_category":"leader_candidate"})
         tokens["engineer"] = (await req("POST", "/auth/login", "engineer", json={"phone":"19911112222", "password":"585858"}))["access_token"]
@@ -78,22 +78,31 @@ async def main():
         tokens["aftersales2"]=(await req("POST", "/auth/login", "aftersales2", json={"phone":"19911116666","password":"585858"}))["access_token"]
         backup=await req("POST", "/field/people", json={"name":"协管区域组长","phone":"19911117777","employee_no":"ROT-REGION-BACKUP","role":"regional_lead"})
         tokens["backup"]=(await req("POST", "/auth/login", "backup", json={"phone":"19911117777","password":"585858"}))["access_token"]
-        await req("PUT", f"/field/projects/{pid}/configuration", json={"rule_id":rule["id"]})
         with patch.object(field_membership, "clock_now", side_effect=lambda: moment), patch.object(field_pending, "clock_now", side_effect=lambda: moment), patch.object(rotation, "today", side_effect=lambda: simulated_today):
-            await req("POST", f"/field/projects/{pid}/members", "staff", json={"employee_ids":[eid]})
+            await req("PUT", f"/field/projects/{pid}/pending-roster", json={
+                "manager_id":lead["id"], "member_ids":[eid]})
             runtime = await req("GET", "/attendance/my/runtime", "engineer")
             assert runtime["field_managed"] and not runtime["has_rule"] and runtime["project_context"] is None
             async with async_session() as db:
                 assert not await MonthSummaryService._expected_work_day(db, eid, day, None)
-            body = {"employee_ids":[eid], "start_date":str(day), "end_date":str(day+timedelta(days=27)), "cycle_start":str(day),
-                "edits":[{"date":str(day),"kind":"work","shift_label":"night"}]}
+            first_week_end = day + timedelta(days=6-day.weekday())
+            first_week = {"employee_ids":[lead["id"],eid], "start_date":str(day),
+                "end_date":str(first_week_end), "cycle_start":str(day),
+                "person_edits":[{"employee_id":eid,"date":str(day),"kind":"work","shift_label":"night"}]}
+            pending = await req("POST", f"/rotation/projects/{pid}/preview", "manager", json=first_week)
+            assert pending["phase"] == "pre_rule"
+            await req("POST", f"/rotation/projects/{pid}/publish?revision={pending['revision']}", "manager", json=first_week)
+            await req("PUT", f"/field/projects/{pid}/configuration", json={"rule_id":rule["id"]})
+            next_monday = first_week_end + timedelta(days=1)
+            body = {"employee_ids":[eid], "start_date":str(next_monday), "end_date":str(day+timedelta(days=27)), "cycle_start":str(day)}
             await req("POST", f"/rotation/projects/{pid}/preview", "engineer", status=403, json=body)
             await req("POST", f"/rotation/projects/{base['id']}/preview", "engineer", status=403, json=body)
             preview = await req("POST", f"/rotation/projects/{pid}/preview", "manager", json=body)
-            assert [i for i, row in enumerate(preview["rows"][:14]) if row["original_kind"] == "rest"] == [6,13]
-            assert preview["rows"][0]["shift_label"] == "night"
+            assert [row["date"] for row in preview["rows"] if row["original_kind"] == "rest"] == [
+                str(day+timedelta(days=offset)) for offset in (6, 13, 20, 27)
+                if day+timedelta(days=offset) >= next_monday]
             async with async_session() as db:
-                assert await db.scalar(select(func.count(RotationDay.id))) == 0
+                assert await db.scalar(select(func.count(RotationDay.id))) == 2 * (first_week_end-day).days + 2
             await req("POST", f"/rotation/projects/{pid}/publish?revision=stale", "manager", status=409, json=body)
             await req("POST", f"/rotation/projects/{pid}/publish?revision={preview['revision']}", "manager", json=body)
             await req("POST", f"/rotation/projects/{pid}/publish?revision={preview['revision']}", "manager", status=409, json=body)
@@ -290,10 +299,27 @@ async def main():
             future={"employee_ids":[eid],"start_date":str(day+timedelta(days=30)),"end_date":str(day+timedelta(days=33)),"cycle_start":str(day)}
             future_preview=await req("POST",f"/rotation/projects/{pid}/preview","manager",json=future)
             await req("POST",f"/rotation/projects/{pid}/publish?revision={future_preview['revision']}","manager",json=future)
-            target_lead=await req("POST","/field/people",json={"name":"接收项目组长","phone":"19911115555","employee_no":"ROT-TARGET-LEAD","role":"employee"})
+            target_lead=await req("POST","/field/people",json={"name":"接收项目组长","phone":"19911115555","employee_no":"ROT-TARGET-LEAD","role":"employee","field_staff_category":"leader_candidate"})
+            synthetic_phone = "199" + "1111" + "9999"
+            target_member=await req("POST","/field/people",json={"name":"接收项目组员","phone":synthetic_phone,"employee_no":"ROT-TARGET-MEMBER","role":"employee","field_staff_category":"member"})
             tokens["target_lead"]=(await req("POST","/auth/login","target_lead",json={"phone":"19911115555","password":"585858"}))["access_token"]
             target=await req("POST","/field/projects",json={"code":"ROT-NEXT","name":"调动后轮休项目","customer_id":base["customer_id"],"manager_id":target_lead["id"]})
+            await req("PUT",f"/field/projects/{target['id']}/pending-roster",json={
+                "manager_id":target_lead["id"],"member_ids":[target_member["id"]]})
+            # Prepare this receiving project's own leader and member before
+            # attaching its first rule. The transferred engineer remains on
+            # the source project until the later two-sided transfer approval.
+            saved_today, saved_moment = simulated_today, moment
+            simulated_today = day + timedelta(days=30)
+            moment = datetime.combine(simulated_today,time(8),rotation.CST).astimezone(timezone.utc)
+            target_end = simulated_today + timedelta(days=6-simulated_today.weekday())
+            target_plan = {"employee_ids":[target_lead["id"],target_member["id"]],
+                "start_date":str(simulated_today),"end_date":str(target_end),
+                "cycle_start":str(simulated_today),"reason":"周期排班"}
+            target_preview=await req("POST",f"/rotation/projects/{target['id']}/preview","target_lead",json=target_plan)
+            await req("POST",f"/rotation/projects/{target['id']}/publish?revision={target_preview['revision']}","target_lead",json=target_plan)
             await req("PUT",f"/field/projects/{target['id']}/configuration",json={"rule_id":rule["id"]})
+            simulated_today, moment = saved_today, saved_moment
             incoming=await req("POST","/field/people",json={"name":"接收区域组长","phone":"19911113333","employee_no":"ROT-REGION","role":"regional_lead"})
             tokens["incoming"]=(await req("POST","/auth/login","incoming",json={"phone":"19911113333","password":"585858"}))["access_token"]
             await req("PUT",f"/field/projects/{target['id']}/regional-leads",json={"primary_lead_id":incoming["id"],"assistant_lead_ids":[],"reason":"接收区域"})

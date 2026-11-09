@@ -159,14 +159,16 @@ async def directory(db, user):
             | (FieldAssignment.site_id.in_(owned_sites))
         )
     assignments = list((await db.scalars(stmt)).all())
-    pending_stmt = select(FieldProjectPendingMember).where(
+    all_pending_stmt = select(FieldProjectPendingMember).where(
         FieldProjectPendingMember.project_id.in_(pids)).order_by(FieldProjectPendingMember.id)
+    all_pending_rows = list((await db.scalars(all_pending_stmt)).all())
+    pending_rows = all_pending_rows
     if not admin:
         owned = {p.id for p in projects if p.manager_id == user.id}
-        pending_stmt = pending_stmt.where(
-            (FieldProjectPendingMember.employee_id == user.id)
-            | (FieldProjectPendingMember.project_id.in_(owned)))
-    pending_rows = list((await db.scalars(pending_stmt)).all())
+        pending_rows = [row for row in all_pending_rows
+                        if row.employee_id == user.id or row.project_id in owned]
+    from app.services.rotation_draft import project_statuses
+    draft_status = await project_statuses(db, pids, all_pending_rows)
     es = select(Employee).where(Employee.is_active.is_(True)).order_by(Employee.name)
     if identity & {"aftersales_manager", "regional_lead"} and not identity & {"admin", "hr"}:
         es = es.where(Employee.id.in_(aftersales_person_ids()))
@@ -251,6 +253,10 @@ async def directory(db, user):
     authority = {p.id: await role_in_project(db, user, p.id) for p in projects}
     managed_ids = {pid for pid, role in authority.items() if role in {"admin", "aftersales_manager", "regional_lead"}}
     schedule_ids = managed_ids | {pid for pid, role in authority.items() if role == "project_leader"}
+    for pid in pids - schedule_ids:
+        draft_status[pid] = {**draft_status[pid],
+            "pre_rule_schedule_employee_ids": [],
+            "pre_rule_schedule_missing_member_ids": []}
     tegene = {r.project_id: r for r in (await db.scalars(
         select(FieldTegeneProject).where(FieldTegeneProject.project_id.in_(pids))
     )).all()}
@@ -271,6 +277,7 @@ async def directory(db, user):
                 "rule_name": rule_names.get(active_sites[p.id].rule_id, "") if p.id in active_sites else "",
                 "member_count": len({a.employee_id for a in assignments if active(a) and site_map[a.site_id].project_id == p.id}),
                 "pending_member_count": len([row for row in pending_rows if row.project_id == p.id]),
+                **draft_status[p.id],
             }
             for p in projects
         ],
@@ -407,6 +414,9 @@ async def save_project(db, user, data, item_id=None):
 
 async def save_site(db, user, data, item_id=None):
     project = await require_project_manager(db, user, data.project_id)
+    # Serialize first-site binding with roster confirmation and draft publish.
+    project = await db.scalar(select(FieldProject).where(
+        FieldProject.id == project.id).with_for_update().execution_options(populate_existing=True))
     rule = await db.get(AttendanceRule, data.rule_id)
     if not project or not project.is_active or not rule or not rule.is_active:
         raise HTTPException(422, "项目或考勤规则无效")
@@ -415,6 +425,20 @@ async def save_site(db, user, data, item_id=None):
         raise HTTPException(404, "现场不存在")
     if obj is not None and obj.project_id != data.project_id:
         raise HTTPException(409, "已有现场不能更改所属项目，请新建现场")
+    first_site = obj is None and not await db.scalar(select(FieldSite.id).where(
+        FieldSite.project_id == project.id).limit(1))
+    draft_members = set()
+    if first_site:
+        from app.models.rotation import RotationDraftDay
+        from app.services import rotation_draft
+        rotation_mode = (rule.extra_config or {}).get("rule_type") == "rotation"
+        has_drafts = await db.scalar(select(RotationDraftDay.id).where(
+            RotationDraftDay.project_id == project.id).limit(1))
+        if has_drafts and not rotation_mode:
+            raise HTTPException(422, "本项目已有待生效个人轮休排班，请选择“现场轮休”规则")
+        if rotation_mode:
+            await rotation_draft.require_ready(db, project.id)
+            draft_members = await rotation_draft.pending_ids(db, project.id)
     if obj is not None and obj.rule_id != data.rule_id:
         # Already-punched days and today's shift retain their original rule.
         future = (await db.scalars(select(ShiftSchedule)
@@ -439,7 +463,10 @@ async def save_site(db, user, data, item_id=None):
     # A newly saved project rule turns the complete pending roster into active
     # participation only if everyone passes the same conflict preflight.
     from app.services.field_pending import activate_members
-    await activate_members(db, user, project.id, fail_on_conflict=False)
+    await activate_members(db, user, project.id, fail_on_conflict=bool(draft_members))
+    if draft_members:
+        from app.services import rotation_draft
+        await rotation_draft.finalize(db, user, project.id, rule, draft_members)
     return as_dict(obj)
 
 

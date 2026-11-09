@@ -26,6 +26,29 @@ class RotationDay(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class RotationDraftDay(Base):
+    """Confirmed personal dates awaiting the project's first rotation rule.
+
+    These rows never grant attendance, rest credits or a rule snapshot. The first
+    rule converts the complete project plan into RotationDay in one transaction.
+    """
+
+    __tablename__ = "field_rotation_draft_days"
+    __table_args__ = (UniqueConstraint("employee_id", "work_date", name="uq_rotation_draft_person_day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("field_projects.id"), index=True)
+    work_date: Mapped[date] = mapped_column(Date)
+    cycle_start: Mapped[date] = mapped_column(Date)
+    original_kind: Mapped[str] = mapped_column(String(12))
+    kind: Mapped[str] = mapped_column(String(12))
+    shift_label: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    reason: Mapped[str] = mapped_column(String(500), default="周期排班")
+    updated_by: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class RotationClaim(Base):
     __tablename__ = "field_rotation_claims"
     id: Mapped[int] = mapped_column(primary_key=True)

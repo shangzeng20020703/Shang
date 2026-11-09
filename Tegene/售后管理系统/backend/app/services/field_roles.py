@@ -150,12 +150,15 @@ async def require_project_schedule_manager(db, user, project_id, employee_id=Non
         raise HTTPException(403, "无权为该项目排班")
     if employee_id is not None and role == "project_leader":
         # A project leader may schedule themselves or active/future participants.
-        from app.models.field_service import FieldSite
+        from app.models.field_service import FieldSite, FieldProjectPendingMember
         if employee_id != user.id and not await db.scalar(select(FieldAssignment.id)
                 .join(FieldSite, FieldSite.id == FieldAssignment.site_id)
                 .where(FieldAssignment.employee_id == employee_id,
                        FieldSite.project_id == project_id).limit(1)):
-            raise HTTPException(403, "只能为本项目组员排班")
+            if not await db.scalar(select(FieldProjectPendingMember.id).where(
+                    FieldProjectPendingMember.employee_id == employee_id,
+                    FieldProjectPendingMember.project_id == project_id).limit(1)):
+                raise HTTPException(403, "只能为本项目组员排班")
     return project
 
 

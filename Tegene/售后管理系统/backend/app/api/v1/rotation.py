@@ -25,6 +25,13 @@ async def publish(project_id: int, data: RotationPublish, revision: str = Query(
     return await service.publish(db, user, project_id, data, revision)
 
 
+@router.delete("/projects/{project_id}/draft-days")
+async def cancel_draft_days(project_id: int, employee_id: int = Query(..., gt=0),
+                            db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.rotation_draft import cancel_person
+    return await cancel_person(db, user, project_id, employee_id)
+
+
 @router.post("/projects/{project_id}/adjust")
 async def adjust(project_id: int, data: RotationAdjust, db=Depends(get_db), user=Depends(get_current_user)):
     return await service.adjust(db, user, project_id, data)

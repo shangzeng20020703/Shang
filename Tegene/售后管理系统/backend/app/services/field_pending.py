@@ -10,6 +10,7 @@ from app.models.attendance import AttendanceRule
 from app.models.audit_log import AuditLog
 from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
+from app.models.rotation import RotationDraftDay
 from app.models.field_service import (
     FieldAssignment, FieldMembership, FieldProject, FieldProjectPendingMember,
     FieldRosterProfile, FieldSite,
@@ -75,6 +76,11 @@ async def confirm_pending_roster(db, user, project_id, data):
               "member_ids": sorted(row.employee_id for row in rows if not row.is_leader_auto)}
     desired = set(requested_ids)
     existing = {row.employee_id: row for row in rows}
+    removed = {row.employee_id for row in rows if row.employee_id not in desired}
+    if removed and await db.scalar(select(RotationDraftDay.id).where(
+            RotationDraftDay.project_id == project_id,
+            RotationDraftDay.employee_id.in_(removed)).limit(1)):
+        raise HTTPException(409, "拟移出的人员已有确认的个人排班；请先撤销其待生效排班再确认名单")
     if project.manager_id != data.manager_id:
         await record_project_leader_change(db, user, project, data.manager_id)
     for row in rows:
@@ -242,6 +248,10 @@ async def remove_pending(db, user, project_id, pending_id):
         raise HTTPException(404, "待配置人员不存在")
     if row.employee_id == project.manager_id:
         raise HTTPException(409, "项目组长已被任命，请先更换项目组长")
+    if await db.scalar(select(RotationDraftDay.id).where(
+            RotationDraftDay.project_id == project_id,
+            RotationDraftDay.employee_id == row.employee_id).limit(1)):
+        raise HTTPException(409, "该人员已有确认的个人排班，请先撤销待生效排班")
     await db.delete(row)
     await db.flush()
     return {"deleted": True, "id": pending_id}
@@ -250,6 +260,10 @@ async def remove_pending(db, user, project_id, pending_id):
 async def sync_project_leader(db, user, project, previous_employee_id):
     """Keep automatic pending rows aligned with the current appointment."""
     if previous_employee_id and previous_employee_id != project.manager_id:
+        if await db.scalar(select(RotationDraftDay.id).where(
+                RotationDraftDay.project_id == project.id,
+                RotationDraftDay.employee_id == previous_employee_id).limit(1)):
+            raise HTTPException(409, "原项目组长已有确认的个人排班，请先撤销待生效排班")
         await db.execute(delete(FieldProjectPendingMember).where(
             FieldProjectPendingMember.project_id == project.id,
             FieldProjectPendingMember.employee_id == previous_employee_id,

@@ -325,7 +325,7 @@
         <!-- Tab: 考勤规则 -->
         <el-tab-pane v-if="projectRuleMode || canManageGlobalRules || canManageProjectRules" :label="projectRuleMode?'项目专用规则':'考勤规则'" name="rules">
           <el-alert :title="projectRuleMode?'当前项目规则':canManageGlobalRules?'统一维护项目考勤规则':'按项目配置考勤规则'" type="info" :closable="false" show-icon style="margin-bottom:16px">
-            <template v-if="projectRuleMode">{{selectedProject?.name || `项目 ${projectRuleId}`}} 的规则；请先在项目库分配人员，再选择“现场轮休”并设置每日工时。保存后待配置人员会统一启用。</template>
+            <template v-if="projectRuleMode">{{selectedProject?.name || `项目 ${projectRuleId}`}} 的规则；先在项目库确认组长和组员，再确认一个共同未来周的全员个人排班。完成后可配置现场轮休工时、位置和照片要求；规则保存后人员及待生效计划才正式启用。</template>
             <template v-else-if="canManageGlobalRules">在这里配置上下班时间、定位 / WiFi 和照片要求；项目库直接选用已启用的规则。<router-link to="/field">前往项目库</router-link></template>
             <template v-else>可查看全部项目规则；区域组长只能新建或修改售后经理分配的项目，售后经理可管理全部项目。节假日表仍由系统管理员维护。</template>
           </el-alert>
@@ -346,9 +346,10 @@
             <el-button v-if="!projectRuleMode" type="primary" @click="openRuleDialog()">
               <el-icon><Plus /></el-icon> 新增规则
             </el-button>
-            <el-button v-if="projectRuleMode && canEditProjectRule && projectRuleMissing" type="primary" @click="openRuleDialog()">
+            <el-button v-if="projectRuleMode && canEditProjectRule && projectRuleMissing" type="primary" :disabled="!projectPreRuleReady" @click="openRuleDialog()">
               <el-icon><Plus /></el-icon> 新建现场轮休规则
             </el-button>
+            <el-button v-if="projectRuleMode && projectRuleMissing" @click="router.push({path:'/rotation',query:{project_id:projectRuleId}})">查看本项目个人排班</el-button>
             <el-button v-if="projectRuleMode && projectPendingMembers.length && selectedProject?.rule_id" :loading="projectActivationLoading" @click="activateProjectMembers">重试启用待配置人员（{{projectPendingMembers.length}}）</el-button>
             <el-button v-if="projectRuleMode && projectRotationReady" type="primary" :disabled="!!projectPendingMembers.length || !projectAssignedCount" @click="router.push({path:'/rotation',query:{project_id:projectRuleId}})">打开本项目个人排班</el-button>
             <el-select v-if="!projectRuleMode" v-model="ruleStatusFilter" placeholder="规则状态" clearable style="width: 140px" @change="fetchRules">
@@ -362,8 +363,10 @@
 
           <el-alert v-if="ruleLoadError && (projectRuleMode || canManageGlobalRules)" :title="ruleLoadError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectActivationError" :title="projectActivationError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
-          <el-alert v-if="projectRuleMode && projectPendingMembers.length && !projectActivationError" :title="`${projectPendingMembers.length} 位人员待生效；全部启用后才能按本项目打卡和排班`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
-          <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && projectAssignedCount" :title="`规则已保存，${projectAssignedCount} 位人员已启用；打开个人排班后将默认选中本周可排班人员`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRuleMissing && !projectPreRuleReady" :title="`请先确认首周全员个人排班：共同周${selectedProject?.pre_rule_schedule_week_start ? `（周一 ${selectedProject.pre_rule_schedule_week_start} 起）` : ''} ${selectedProject?.pre_rule_schedule_member_count || 0} / ${projectPendingMembers.length} 人已确认；仍需确认 ${projectPendingScheduleMissingNames}`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRuleMissing && projectPreRuleReady" :title="`首周 ${projectPendingMembers.length} 人个人排班已确认；可建立现场轮休规则。规则保存前计划待生效，不能打卡`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectPendingMembers.length && !projectRuleMissing && !projectActivationError" :title="`${projectPendingMembers.length} 位人员待生效；全部启用后才能按本项目打卡和排班`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && projectAssignedCount" :title="`规则已保存，${projectAssignedCount} 位人员已启用；已确认的未来排班正式生效，可打开个人排班查看`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && !projectAssignedCount" title="规则已保存，但项目暂无已启用人员；请返回项目库确认组长和组员名单" type="info" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectRuleMissing" title="当前项目尚未配置考勤规则" type="info" :closable="false" show-icon style="margin-bottom:12px" />
           <el-table v-if="projectRuleMode || canManageGlobalRules" :data="rules" v-loading="ruleLoading" class="modern-table" row-class-name="modern-row">
@@ -1149,8 +1152,8 @@
                   </el-checkbox-group>
                 </div>
                 <div v-if="ruleForm.extra.rule_type === 'rotation'" class="free-time-row">
-                  <span v-if="projectRuleMode">不按星期限定日期。先保存本项目规则并启用人员，再点击页面上的“打开本项目个人排班”预览和发布六上休一日历。</span>
-                  <span v-else>不按星期限定日期。规则关联项目并启用人员后，从项目库打开个人排班，预览和发布六上休一日历。</span>
+                  <span v-if="projectRuleMode">不按星期限定日期。先在本项目个人排班中确认组长及全部组员的共同首周计划，再保存规则；规则保存后计划正式生效。</span>
+                  <span v-else>不按星期限定日期。新项目先确认人员和个人排班，再关联现场轮休规则；已配置项目可从项目库继续按周排班。</span>
                 </div>
                 <div class="free-time-row">
                   <div class="free-time-label">工作时长</div>
@@ -2774,6 +2777,12 @@ const projectDirectoryLoading = ref(false)
 const projectDirectoryError = ref('')
 const selectedProject = computed(() => projectDirectory.value.find(project => Number(project.id) === projectRuleId.value))
 const projectPendingMembers = computed(() => projectPendingDirectory.value.filter(member => Number(member.project_id) === projectRuleId.value))
+const projectPreRuleReady = computed(() => !!selectedProject.value?.pre_rule_schedule_ready)
+const projectPendingScheduleMissingNames = computed(() => {
+  const ids = Array.isArray(selectedProject.value?.pre_rule_schedule_missing_member_ids) ? selectedProject.value.pre_rule_schedule_missing_member_ids : []
+  const missing = ids.length ? projectPendingMembers.value.filter(member => ids.some((id:number) => Number(id) === Number(member.employee_id))) : projectPendingMembers.value
+  return missing.map(member => member.employee_name || `人员${member.employee_id}`).join('、') || '组长和全部组员'
+})
 const projectAssignedCount = computed(() => new Set(projectAssignmentDirectory.value.filter(assignment => Number(assignment.project_id) === projectRuleId.value && assignment.status === 'active').map(assignment => Number(assignment.employee_id))).size)
 const projectRotationReady = computed(() => !!selectedProject.value?.rule_id && rules.value.some((rule: any) => Number(rule.id) === Number(selectedProject.value.rule_id) && rule.extra?.rule_type === 'rotation'))
 const projectActivationError = ref('')
@@ -5831,7 +5840,7 @@ async function fetchRules() {
 }
 
 function openRuleDialog(row?: any) {
-  if (projectRuleMode.value && (!canEditProjectRule.value || (!row && !projectRuleMissing.value))) return
+  if (projectRuleMode.value && (!canEditProjectRule.value || (!row && (!projectRuleMissing.value || !projectPreRuleReady.value)))) return
   if (row) {
     ruleForm.value = normalizeRule(row)
     if (projectRuleMode.value) ruleForm.value.extra.scope_mode = 'project'
@@ -6016,7 +6025,7 @@ function buildRulePayload() {
 }
 
 async function submitRule() {
-  if (projectRuleMode.value && !canEditProjectRule.value) return
+  if (projectRuleMode.value && (!canEditProjectRule.value || (projectRuleMissing.value && !projectPreRuleReady.value))) return
   const el = ruleFormRef.value
   if (!el) return
   if (!(await el.validate().catch(() => false))) return
@@ -6111,7 +6120,7 @@ async function submitRule() {
       await fetchProjectDirectory()
       await fetchRules()
       const activated = await activateProjectMembers()
-      if (activated && projectAssignedCount.value) ElMessage.success(`本项目专用规则已保存，${projectAssignedCount.value} 位人员已启用；可打开个人排班`)
+      if (activated && projectAssignedCount.value) ElMessage.success(`本项目专用规则已保存，${projectAssignedCount.value} 位人员已启用；确认的未来排班已正式生效`)
       else if (activated) ElMessage.warning('规则已保存，但当前没有已启用人员；请在项目库确认人员配置')
       else ElMessage.warning('规则已保存；待配置人员仍有冲突，请处理后重试启用')
       return

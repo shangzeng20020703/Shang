@@ -57,7 +57,7 @@ from app.models.employee_role import EmployeeRole
 from app.models.overtime import OvertimeRequest
 from app.models.audit_log import AuditLog
 from app.models.system_setting import SystemSetting
-from app.models.rotation import RotationDay, RotationClaim, RotationAccount, RotationLedger
+from app.models.rotation import RotationDay, RotationDraftDay, RotationClaim, RotationAccount, RotationLedger
 from app.models.field_service import FieldProject, FieldSite, FieldAssignment, FieldMembership
 from app.models.field_absence import FieldAbsenceDay
 from app.models.changelog import DepartmentChangeLog

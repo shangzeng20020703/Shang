@@ -50,8 +50,8 @@ async def dispatch_loop():
 async def lifespan(app):
     # Schema changes are explicit via bootstrap; startup verifies the baseline exists.
     async with async_session() as db:
-        if not await db.get(FieldSchemaVersion, 12):
-            raise RuntimeError("Run python -m app.bootstrap to apply schema version 12 first")
+        if not await db.get(FieldSchemaVersion, 13):
+            raise RuntimeError("Run python -m app.bootstrap to apply schema version 13 first")
     worker = asyncio.create_task(dispatch_loop()) if settings.BACKGROUND_JOBS else None
     yield
     if worker:
