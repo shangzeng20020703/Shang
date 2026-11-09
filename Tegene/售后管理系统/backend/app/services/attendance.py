@@ -2469,7 +2469,7 @@ class AttendanceRecordService:
         管理端状态列需要展示“当天发生过的异常组合”，例如上班迟到且下班早退时显示
         “迟到/早退”。数据库 status 仍保留主状态，展示态在响应阶段计算。
         """
-        if (runtime or {}).get("rotation", {}).get("kind") == "pending":
+        if (runtime or {}).get("rotation", {}).get("kind") in {"pending", "pending_rest"}:
             return "待确认"
         if bool((runtime or {}).get("no_punch")):
             return "免打卡"
@@ -2652,7 +2652,7 @@ class AttendanceRecordService:
 
     @staticmethod
     def _attach_display_status(record: AttendanceRecord, runtime: Optional[Dict[str, Any]]) -> None:
-        if (runtime or {}).get("rotation", {}).get("kind") == "pending":
+        if (runtime or {}).get("rotation", {}).get("kind") in {"pending", "pending_rest"}:
             record.display_status = "待确认"
             record.clock_in_status = record.clock_out_status = "待确认"
             return
@@ -3569,6 +3569,22 @@ class AttendanceRecordService:
         )
         if delta == 0:
             return
+        # A published onsite rotation day earns rest through the rolling six-day
+        # ledger.  Its overtime hours remain on the attendance record for pay,
+        # but the same punch must not also mint generic comp-time leave.
+        from app.models.rotation import RotationDay
+        from app.services.rotation_entitlement import policy as rotation_entitlement_policy
+
+        # Legacy unit tests wrap a sync Session; production uses AsyncSession.
+        rolling_policy = await rotation_entitlement_policy(db) if isinstance(db, AsyncSession) else None
+        if rolling_policy and target_date >= rolling_policy.effective_date:
+            is_rotation_rule = extra_cfg.get("rule_type") == "rotation"
+            is_rotation_day = await db.scalar(select(RotationDay.id).where(
+                RotationDay.employee_id == employee_id,
+                RotationDay.work_date == target_date,
+            ).limit(1))
+            if is_rotation_rule or is_rotation_day:
+                return
 
         leave_type = await AttendanceRecordService._get_comp_time_leave_type(db)
         if leave_type is None:
@@ -3721,6 +3737,21 @@ class AttendanceRecordService:
         request_result = await db.execute(request_stmt)
         overtime_requests = list(request_result.scalars().all())
 
+        from app.models.rotation import RotationDay
+        from app.services.rotation_entitlement import policy as rotation_entitlement_policy
+
+        rolling_policy = await rotation_entitlement_policy(db) if isinstance(db, AsyncSession) else None
+        rotation_dates: set[Tuple[int, date]] = set()
+        if rolling_policy and rolling_policy.effective_date <= end:
+            rotation_stmt = select(RotationDay.employee_id, RotationDay.work_date).where(
+                RotationDay.work_date >= max(start, rolling_policy.effective_date),
+                RotationDay.work_date <= end,
+            )
+            if target_emp_ids:
+                rotation_stmt = rotation_stmt.where(RotationDay.employee_id.in_(list(target_emp_ids)))
+            rotation_dates = {(int(emp_id), work_day) for emp_id, work_day in
+                              (await db.execute(rotation_stmt)).all()}
+
         emp_ids = sorted(
             target_emp_ids
             | {int(record.employee_id) for record in records}
@@ -3832,6 +3863,9 @@ class AttendanceRecordService:
                 employee=employees.get(emp_id),
             )
             extra_cfg = (runtime or {}).get("extra") or {}
+            if rolling_policy and record.date >= rolling_policy.effective_date:
+                if (emp_id, record.date) in rotation_dates or extra_cfg.get("rule_type") == "rotation":
+                    continue
             day_type = await _day_type_for(emp_id, record.date)
             raw_overtime = Decimal(str(record.overtime_hours or 0))
             if recalculate_records and runtime is not None:
@@ -3956,6 +3990,24 @@ class AttendanceRecordService:
             current_overtime_hours,
         )
         return (current_comp - previous_comp).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+    @staticmethod
+    async def overtime_request_converts_to_comp_time(
+        db: AsyncSession,
+        request: OvertimeRequest,
+        extra_cfg: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Use the same settlement rule as the generic leave-balance backfill."""
+        if extra_cfg is None:
+            runtime = await AttendanceRecordService._get_rule_runtime(
+                db, int(request.employee_id), request.overtime_date)
+            extra_cfg = (runtime or {}).get("extra") or {}
+        employee = await db.get(Employee, int(request.employee_id))
+        day_type = await WorkCalendarService.get_day_type(
+            db, request.overtime_date, getattr(employee, "location_id", None))
+        comp_hours, _ = AttendanceRecordService._split_overtime_settlement(
+            extra_cfg, day_type, request.hours)
+        return comp_hours > 0
 
     @staticmethod
     def _build_overtime_intervals(
@@ -4416,6 +4468,9 @@ class AttendanceRecordService:
             await db.refresh(record)
             AttendanceRecordService._attach_display_status(record, runtime)
         await AttendanceRecordService._refresh_month_summary_for_date(db, employee_id, today)
+        if field_context:
+            from app.services.rotation_entitlement import sync_employee_through
+            await sync_employee_through(db, employee_id, today)
         return record, anomalies
 
     # ------------------------------------------------------------------
@@ -4562,6 +4617,9 @@ class AttendanceRecordService:
             await db.refresh(record)
             AttendanceRecordService._attach_display_status(record, runtime)
         await AttendanceRecordService._refresh_month_summary_for_date(db, employee_id, today)
+        if field_context:
+            from app.services.rotation_entitlement import sync_employee_through
+            await sync_employee_through(db, employee_id, today)
         return record, anomalies
 
     # ------------------------------------------------------------------
@@ -6514,7 +6572,7 @@ class MonthSummaryService:
 
                 if record is not None:
                     day_runtime = await AttendanceRecordService._get_rule_runtime(db, emp_id, current, employee=employee)
-                    if (day_runtime or {}).get("rotation", {}).get("kind") == "pending":
+                    if (day_runtime or {}).get("rotation", {}).get("kind") in {"pending", "pending_rest"}:
                         current += timedelta(days=1)
                         continue
 
@@ -9509,7 +9567,7 @@ class AttendanceReportService:
                 if rotation_kind == "half_leave":
                     leave_days += 0.5
                     status_tokens.add("半天调休")
-                if (runtime or {}).get("rotation", {}).get("kind") == "pending":
+                if (runtime or {}).get("rotation", {}).get("kind") in {"pending", "pending_rest"}:
                     status_tokens.add("待确认")
                     pending_record = records_by_emp_date.get((emp_id, day))
                     detail_day_values[day_column["key"]] = AttendanceReportService._monthly_day_detail(

@@ -279,6 +279,8 @@ const homeSummary = reactive({
   monthlyAbnormalCount: 0,
   annualLeaveBalanceText: '0',
   compTimeBalanceText: '0',
+  rotationBalanceText: '0 天',
+  rotationActive: false,
   payslipCount: 0,
   assignmentCount: 0,
   peopleTotal: 0,
@@ -398,6 +400,7 @@ const stats = computed(() => {
     { label: '待办', value: `${homeSummary.pendingApprovals}`, path: '/app/tabs/approvals' },
     { label: '本月异常', value: `${homeSummary.monthlyAbnormalCount}`, kind: 'monthly_abnormal' },
     { label: '年假余额', value: homeSummary.annualLeaveBalanceText, path: '/app/leave' },
+    ...(homeSummary.rotationActive ? [{ label: '现场轮休可用额度', value: homeSummary.rotationBalanceText, path: '/app/rotation' }] : []),
     { label: '调休余额', value: homeSummary.compTimeBalanceText, kind: 'comp_time_detail' },
     { label: '我的项目', value: `${homeSummary.assignmentCount}`, path: '/app/field' },
   ]
@@ -791,15 +794,20 @@ async function loadCriticalHomeData() {
     get<any>('/field/directory'),
     get<any[]>('/leave/types'),
     get<any>('/attendance/mobile/dashboard', { range_type: 'month', target_date: targetDate }),
+    get<any>('/rotation/me/entitlement'),
   ])
 
-  const [balance, payslips, assets, leaveTypes, monthlyDashboard] = requests
+  const [balance, payslips, assets, leaveTypes, monthlyDashboard, rotationEntitlement] = requests
   isProjectLeader.value = assets.status === 'fulfilled' && Array.isArray(assets.value?.projects)
     && assets.value.projects.some((project: any) => project.manager_id === auth.user?.id)
   const balanceRows = balance.status === 'fulfilled' && Array.isArray(balance.value) ? balance.value : []
   const leaveTypeRows = leaveTypes.status === 'fulfilled' && Array.isArray(leaveTypes.value) ? leaveTypes.value : []
   homeSummary.annualLeaveBalanceText = formatTypedLeaveBalance(balanceRows, leaveTypeRows, isAnnualLeaveBalance)
   homeSummary.compTimeBalanceText = formatCompTimeBalance(balanceRows, leaveTypeRows)
+  homeSummary.rotationActive = rotationEntitlement.status === 'fulfilled' && rotationEntitlement.value?.active === true
+  homeSummary.rotationBalanceText = rotationEntitlement.status === 'fulfilled'
+    ? `${Number(rotationEntitlement.value?.available_days || 0)} 天${rotationEntitlement.value?.enabled ? '' : ' · 待启用'}`
+    : '0 天'
   homeSummary.payslipCount = payslips.status === 'fulfilled' ? payslips.value.length : 0
   homeSummary.assignmentCount = assets.status === 'fulfilled' ? new Set(assets.value.assignments.filter((item: any) => item.employee_id === auth.user?.id && item.status === 'active' && item.end_date >= targetDate).map((item: any) => item.project_id)).size : 0
   applyMonthlyAbnormalDashboard(monthlyDashboard.status === 'fulfilled' ? monthlyDashboard.value : null)

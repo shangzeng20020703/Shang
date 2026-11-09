@@ -23,7 +23,8 @@ from app.services import field_service as field, field_roles
 from app.services.notification import NotificationService
 from app.services.field_membership import lock_person, snapshot, restore, utc, CST
 
-LABELS = {"work": "上班", "rest": "正常轮休", "leave": "调休", "half_leave": "半天调休", "pending": "待确认"}
+LABELS = {"work": "上班", "rest": "正常轮休", "leave": "调休", "half_leave": "半天调休",
+          "pending": "待确认", "pending_rest": "待兑现休息计划"}
 REST_POLICIES = {"comp_time", "rest", "rest_time", "time_off", "lieu", "adjust_rest"}
 SHIFT_LABEL_KEY = "_rotation_display_shift_label"
 
@@ -75,6 +76,7 @@ async def day_row(db, employee_id, day, project_id=None):
 def day_view(row):
     return {"id": row.id, "employee_id": row.employee_id, "project_id": row.project_id, "date": row.work_date,
         "cycle_start": row.cycle_start, "original_kind": row.original_kind, "kind": row.kind,
+        "rest_type": (row.rule_snapshot or {}).get("_rotation_rest_type"), "rest_status": None,
         "shift_label": day_shift_label(row),
         "label": LABELS[row.kind], "revision": row.revision, "reason": row.reason, "updated_by": row.updated_by,
         "updated_at": row.updated_at, "rule_name": row.rule_snapshot.get("name"),
@@ -121,12 +123,26 @@ async def apply_runtime(db, runtime, employee_id, day, project_id=None):
         rule.extra_config = extra
         runtime.update(attendance._build_runtime(rule, None, day))
         state = day_view(row)
+        if row.kind == "rest":
+            from app.services.rotation_entitlement import policy, ordinary_rest, today as entitlement_today
+            from app.models.rotation_entitlement import RotationAutoRest
+            configured = await policy(db)
+            if configured and day >= configured.effective_date:
+                planned = ordinary_rest(row)
+                auto = await db.scalar(select(RotationAutoRest).where(
+                    RotationAutoRest.employee_id == employee_id, RotationAutoRest.work_date == day)) if planned else None
+                balance = await db.get(RotationAccount, employee_id)
+                if (not planned or
+                        (day <= entitlement_today() and (not auto or auto.status != "applied")) or
+                        (day > entitlement_today() and (not balance or balance.units < 2))):
+                    state["kind"] = "pending_rest"
+                    state["label"] = LABELS["pending_rest"]
     else:
         state = {"kind": "pending", "label": LABELS["pending"], "date": day, "required_hours": 0}
     state = jsonable_encoder(state)
-    runtime["extra"] = {**(runtime.get("extra") or {}), "_rotation_pending": state["kind"] == "pending"}
+    runtime["extra"] = {**(runtime.get("extra") or {}), "_rotation_pending": state["kind"] in {"pending", "pending_rest"}}
     needs_punch = state["kind"] in {"work", "half_leave"}
-    runtime.update(rotation=state, no_punch=not needs_punch,
+    runtime.update(rotation=state, no_punch=not (needs_punch or state["kind"] == "pending_rest"),
         check_in_required=needs_punch, check_out_required=needs_punch)
     return runtime
 
@@ -339,6 +355,9 @@ async def account(db, eid):
 
 
 async def post_ledger(db, user, claim, action, units, note):
+    if action == "leave" and units < 0:
+        from app.services.rotation_entitlement import sync_employee_through
+        await sync_employee_through(db, claim.employee_id, today())
     balance = await account(db, claim.employee_id)
     if balance.units + units < 0:
         raise HTTPException(409, "待休余额不足。已使用额度不能直接撤销，请先核对使用记录")
@@ -448,6 +467,8 @@ async def create_claim(db, user, data, *, require_actor_scope=True):
         for pid in day_projects:
             await field_roles.require_project_schedule_manager(db, user, pid, eid)
     await lock_person(db, eid)
+    from app.services.rotation_entitlement import policy as entitlement_policy, ordinary_rest
+    rolling_policy = await entitlement_policy(db)
     snapshots = []
     for item in data.days:
         pid = item.project_id or data.project_id
@@ -472,10 +493,15 @@ async def create_claim(db, user, data, *, require_actor_scope=True):
         if not row:
             raise HTTPException(422, "请先由负责人发布本人在该项目的排班")
         await unlocked(db, eid, item.date)
+        if data.kind == "credit" and rolling_policy and item.date >= rolling_policy.effective_date:
+            raise HTTPException(422, "该日期按累计六个有效工作日自动计算，请使用出勤确认入口")
         if data.kind == "credit" and (row.original_kind != "rest" or row.kind == "pending" or item.date > today()):
             raise HTTPException(422, "仅能确认已发生的原定轮休日出勤")
-        if data.kind == "leave" and row.kind != "work":
-            raise HTTPException(422, "调休须安排在已发布的上班日，正常轮休无需扣余额")
+        planned_concentrated_rest = bool(data.kind == "leave" and rolling_policy
+            and item.date >= rolling_policy.effective_date and row.kind == "rest"
+            and not ordinary_rest(row))
+        if data.kind == "leave" and row.kind != "work" and not planned_concentrated_rest:
+            raise HTTPException(422, "调休须安排在已发布的上班日或待兑现集中休日期")
         if data.kind == "schedule" and row.kind in {"leave", "half_leave"}:
             raise HTTPException(409, "已有批准调休，请先撤销调休申请")
         if data.kind == "schedule" and row.project_id != pid and await db.scalar(
@@ -628,6 +654,20 @@ async def review(db, user, claim_id, data):
                 if not row or row.revision != item.get("applied_revision"):
                     raise HTTPException(409, "日期已再次调整，请先核对后续调整，不能直接撤销")
                 if item["before_kind"] == "pending":
+                    from app.models.rotation_entitlement import RotationWorkFact
+                    fact = await db.scalar(select(RotationWorkFact.id).where(
+                        RotationWorkFact.employee_id == claim.employee_id,
+                        RotationWorkFact.work_date == day).limit(1))
+                    actual = await db.scalar(select(AttendanceRecord).where(
+                        AttendanceRecord.employee_id == claim.employee_id,
+                        AttendanceRecord.date == day))
+                    trip = await db.scalar(select(AttendanceEffect.id).where(
+                        AttendanceEffect.employee_id == claim.employee_id,
+                        AttendanceEffect.work_date == day,
+                        AttendanceEffect.effect_type == "business_trip",
+                        AttendanceEffect.effect_status == "active").limit(1))
+                    if fact or trip or (actual and (actual.clock_in_time or actual.clock_out_time)):
+                        raise HTTPException(409, "日期已有实际出勤或休息额度来源，不能撤销为未排班；请先核对记录")
                     await db.delete(row)
                     from app.services.attendance_recalc import AttendanceRecalcService
                     await AttendanceRecalcService.mark_dirty(db, employee_id=claim.employee_id, work_date=day)
@@ -651,6 +691,10 @@ async def review(db, user, claim_id, data):
             item = claim.days[0]
             row = await day_row(db, claim.employee_id, date.fromisoformat(item["date"]),
                 item.get("project_id", claim.project_id))
+            from app.services.rotation_entitlement import policy as entitlement_policy
+            rolling_policy = await entitlement_policy(db)
+            if rolling_policy and date.fromisoformat(item["date"]) >= rolling_policy.effective_date:
+                raise HTTPException(409, "该日期已切换为累计六天的休息额度，请使用出勤确认入口")
             if not row or row.original_kind != "rest" or row.kind == "pending":
                 raise HTTPException(409, "原定轮休安排已变化，请重新核对出勤来源")
             await unlocked(db, claim.employee_id, row.work_date)
@@ -681,7 +725,29 @@ async def review(db, user, claim_id, data):
                 if row.project_id != (item.get("before_project_id") or target):
                     raise HTTPException(409, "项目归属已变化，请重新申请")
                 if claim.kind == "leave" and row.kind != "work":
-                    raise HTTPException(409, "日期已不是上班日")
+                    from app.services.rotation_entitlement import policy as entitlement_policy, ordinary_rest
+                    rolling_policy = await entitlement_policy(db)
+                    if not (row.kind == "rest" and rolling_policy and day >= rolling_policy.effective_date
+                            and not ordinary_rest(row)):
+                        raise HTTPException(409, "日期已不是上班日或待兑现集中休日期")
+                if claim.kind == "leave":
+                    from app.models.rotation_entitlement import RotationWorkFact
+                    fact = await db.scalar(select(RotationWorkFact).where(RotationWorkFact.employee_id == claim.employee_id,
+                        RotationWorkFact.work_date == day))
+                    actual = await db.scalar(select(AttendanceRecord).where(AttendanceRecord.employee_id == claim.employee_id,
+                        AttendanceRecord.date == day))
+                    trip = await db.scalar(select(AttendanceEffect.id).where(
+                        AttendanceEffect.employee_id == claim.employee_id,
+                        AttendanceEffect.work_date == day,
+                        AttendanceEffect.effect_type == "business_trip",
+                        AttendanceEffect.effect_status == "active").limit(1))
+                    if item["kind"] == "leave" and ((fact and fact.units) or trip or
+                            (actual and (actual.clock_in_time or actual.clock_out_time))):
+                        raise HTTPException(409, "该日期已有实际出勤或出差，请先核对再批准全天调休")
+                    if item["kind"] == "half_leave":
+                        facts = await credit_facts(db, row) if actual else None
+                        if (fact and fact.units > 1) or (facts and facts["suggested_days"] > 0.5) or trip:
+                            raise HTTPException(409, "该日期已有全天出勤或出差，请先核对再批准半天调休")
                 before_day = day_view(row)
                 if claim.kind == "schedule" and row.project_id != target:
                     if await db.scalar(select(AttendanceRecord.id).where(AttendanceRecord.employee_id == claim.employee_id,
@@ -741,6 +807,10 @@ async def ensure_overtime_not_credited(db, employee_id, day, pay_policy):
         RotationClaim.kind == "credit", RotationClaim.status == "approved", RotationClaim.units > 0))).all()
     if any(c.days[0]["date"] == day.isoformat() for c in claims):
         raise HTTPException(409, "当天已确认轮休攒休，不能重复加班转调休，请先核对来源")
+    from app.models.rotation_entitlement import RotationWorkFact
+    if await db.scalar(select(RotationWorkFact.id).where(RotationWorkFact.employee_id == employee_id,
+            RotationWorkFact.work_date == day, RotationWorkFact.units > 0).limit(1)):
+        raise HTTPException(409, "当天已计入现场轮休有效出勤，不能重复加班转调休")
 
 
 async def calendar(db, user, start, end, project_id=None, employee_id=None):
@@ -774,12 +844,35 @@ async def calendar(db, user, start, end, project_id=None, employee_id=None):
     days = (await db.scalars(stmt.order_by(RotationDay.work_date, RotationDay.employee_id))).all()
     draft_days = (await db.scalars(draft_stmt.order_by(RotationDraftDay.work_date,
         RotationDraftDay.employee_id))).all()
+    tbd_days = []
+    if project_id is None and eid == user.id:
+        from app.models.rotation_person_plan import RotationPersonalPlan, RotationPersonalPlanDay
+        rows = (await db.scalars(select(RotationPersonalPlanDay).where(
+            RotationPersonalPlanDay.employee_id == user.id,
+            RotationPersonalPlanDay.project_id.is_(None),
+            RotationPersonalPlanDay.work_date >= start,
+            RotationPersonalPlanDay.work_date <= end)
+            .order_by(RotationPersonalPlanDay.work_date))).all()
+        occupied = {d.work_date for d in days} | {d.work_date for d in draft_days}
+        for row in rows:
+            if row.work_date in occupied:
+                continue
+            plan = await db.get(RotationPersonalPlan, row.plan_id)
+            tbd_days.append({"id": row.id, "employee_id": row.employee_id,
+                "project_id": None, "date": row.work_date,
+                "cycle_start": row.work_date if plan is None else plan.cycle_start,
+                "original_kind": row.original_kind, "kind": row.kind,
+                "shift_label": row.shift_label if row.kind == "work" else None,
+                "revision": row.revision, "reason": plan.reason if plan else "周期排班",
+                "updated_by": row.updated_by, "updated_at": row.updated_at,
+                "rule_name": None, "required_hours": 0, "status": "pending_project"})
     claims = [c for c in (await db.scalars(claims_stmt.order_by(RotationClaim.id.desc()))).all()
         if any(start.isoformat() <= d["date"] <= end.isoformat() and
             (project_id is None or project_id in {d.get("project_id", c.project_id), d.get("before_project_id")})
             for d in c.days)]
     names = {p.id: p.name for p in (await db.scalars(select(Employee).where(Employee.id.in_(
         {d.employee_id for d in days} | {d.employee_id for d in draft_days} |
+        {d["employee_id"] for d in tbd_days} |
         {c.employee_id for c in claims})))).all()}
     ledger_stmt = select(RotationLedger).join(RotationClaim, RotationLedger.claim_id == RotationClaim.id)
     if project_id:
@@ -792,9 +885,26 @@ async def calendar(db, user, start, end, project_id=None, employee_id=None):
     for claim in claims:
         item = await claim_view(db, claim, user, project_id if project_role == "project_leader" else None)
         claim_views.append(item)
+    from app.services.rotation_entitlement import rest_projection
+    rest_statuses = {}
+    for person_id in {d.employee_id for d in days if d.kind in {"rest", "leave", "half_leave"}}:
+        projections, _ = await rest_projection(db, person_id, start, end)
+        rest_statuses.update({(person_id, p["date"], p["project_id"]): p for p in projections})
+    day_views = []
+    for row in days:
+        item = {**day_view(row), "employee_name": names.get(row.employee_id)}
+        rest = rest_statuses.get((row.employee_id, row.work_date, row.project_id))
+        if rest:
+            item["rest_type"], item["rest_status"] = rest["kind"], rest["status"]
+            if rest["status"] in {"pending_credit", "pending_application", "pending_review"}:
+                item["label"] = "待兑现休息计划"
+            elif rest["status"] == "needs_action":
+                item["label"] = "休息计划待处理"
+        day_views.append(item)
     from app.services.rotation_draft import draft_view
-    return {"days": [{**day_view(d), "employee_name": names.get(d.employee_id)} for d in days],
-        "draft_days": [{**draft_view(d), "employee_name": names.get(d.employee_id)} for d in draft_days],
+    return {"days": day_views,
+        "draft_days": [{**draft_view(d), "employee_name": names.get(d.employee_id)} for d in draft_days] +
+            [{**d, "employee_name": names.get(d["employee_id"])} for d in tbd_days],
         "claims": claim_views, "ledger": [snapshot(l) for l in ledger],
         "balances": [{"employee_id": a.employee_id, "employee_name": names.get(a.employee_id), "days": a.units / 2} for a in accounts],
         "can_manage": managed or bool(roles & {"admin", "aftersales_manager"}), "labels": LABELS}

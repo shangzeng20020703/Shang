@@ -4,7 +4,7 @@ import json
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 
 from app.models.attendance import AttendanceRule
 from app.models.audit_log import AuditLog
@@ -163,11 +163,15 @@ async def activate_members(db, user, project_id, *, fail_on_conflict=True):
 
     now = clock_now()
     local_today = now.astimezone(CST).date()
-    start_date = max(local_today, rule.effective_date)
-    started_at = (now if start_date == local_today else
-                  datetime.combine(start_date, time.min, CST).astimezone(timezone.utc))
-    day_start = datetime.combine(start_date, time.min, CST).astimezone(timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    default_start = max(local_today, rule.effective_date)
+    rotation_mode = (rule.extra_config or {}).get("rule_type") == "rotation"
+    planned_starts = dict((await db.execute(select(
+        RotationDraftDay.employee_id, func.min(RotationDraftDay.work_date)).where(
+            RotationDraftDay.project_id == project_id,
+            RotationDraftDay.work_date >= default_start,
+        ).group_by(RotationDraftDay.employee_id))).all()) if rotation_mode else {}
+    starts = {row.employee_id: max(default_start, planned_starts.get(row.employee_id, default_start))
+              for row in rows}
     # SQLite has no SELECT FOR UPDATE, so serialise by employee row; transactions
     # using MySQL/Postgres also cannot activate the same person concurrently.
     people = {row.employee_id: await lock_person(db, row.employee_id) for row in rows}
@@ -175,6 +179,9 @@ async def activate_members(db, user, project_id, *, fail_on_conflict=True):
     already_assigned = set()
     for row in rows:
         person = people[row.employee_id]
+        start_date = starts[row.employee_id]
+        day_start = datetime.combine(start_date, time.min, CST).astimezone(timezone.utc)
+        day_end = day_start + timedelta(days=1)
         if not person or not person.is_active or person.status not in {"在职", "试用"}:
             conflicts.append({"employee_id": row.employee_id,
                               "employee_name": person.name if person else str(row.employee_id),
@@ -224,6 +231,9 @@ async def activate_members(db, user, project_id, *, fail_on_conflict=True):
     members = []
     for row in rows:
         if row.employee_id not in already_assigned:
+            start_date = starts[row.employee_id]
+            started_at = (now if start_date == local_today else
+                          datetime.combine(start_date, time.min, CST).astimezone(timezone.utc))
             assignment = FieldAssignment(site_id=site.id, employee_id=row.employee_id,
                 start_date=start_date, end_date=date(9999, 12, 30), created_by=user.id,
                 status="active")
@@ -292,5 +302,15 @@ async def first_published_rotation_date(db, employee_id, project_id):
 
 
 async def rotation_punch_ready(db, employee_id, project_id, day):
+    # A confirmed personal plan can reserve a future date before its project
+    # is known. The old open-ended project assignment must not make that date
+    # punchable. Dates with no personal plan remain eligible for the existing
+    # unpublished-but-project-determined "待确认" punch workflow.
+    from app.models.rotation_person_plan import RotationPersonalPlanDay
+    if await db.scalar(select(RotationPersonalPlanDay.id).where(
+        RotationPersonalPlanDay.employee_id == employee_id,
+        RotationPersonalPlanDay.work_date == day,
+        RotationPersonalPlanDay.project_id.is_(None)).limit(1)):
+        return False
     first = await first_published_rotation_date(db, employee_id, project_id)
     return first is not None and first <= day

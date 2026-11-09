@@ -325,7 +325,7 @@
         <!-- Tab: 考勤规则 -->
         <el-tab-pane v-if="projectRuleMode || canManageGlobalRules || canManageProjectRules" :label="projectRuleMode?'项目专用规则':'考勤规则'" name="rules">
           <el-alert :title="projectRuleMode?'当前项目规则':canManageGlobalRules?'统一维护项目考勤规则':'按项目配置考勤规则'" type="info" :closable="false" show-icon style="margin-bottom:16px">
-            <template v-if="projectRuleMode">{{selectedProject?.name || `项目 ${projectRuleId}`}} 的规则；先在项目库确认组长和组员，再确认一个共同未来周的全员个人排班。完成后可配置现场轮休工时、位置和照片要求；规则保存后人员及待生效计划才正式启用。</template>
+            <template v-if="projectRuleMode">{{selectedProject?.name || `项目 ${projectRuleId}`}} 的规则；先在项目库确认组长和组员，再逐人确认至少一个完整排班周期。完成后可配置现场轮休工时、位置和照片要求；规则保存后人员及属于本项目的待生效日期才启用。</template>
             <template v-else-if="canManageGlobalRules">在这里配置上下班时间、定位 / WiFi 和照片要求；项目库直接选用已启用的规则。<router-link to="/field">前往项目库</router-link></template>
             <template v-else>可查看全部项目规则；区域组长只能新建或修改售后经理分配的项目，售后经理可管理全部项目。节假日表仍由系统管理员维护。</template>
           </el-alert>
@@ -363,8 +363,8 @@
 
           <el-alert v-if="ruleLoadError && (projectRuleMode || canManageGlobalRules)" :title="ruleLoadError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectActivationError" :title="projectActivationError" type="error" :closable="false" show-icon style="margin-bottom:12px" />
-          <el-alert v-if="projectRuleMode && projectRuleMissing && !projectPreRuleReady" :title="`请先确认首周全员个人排班：共同周${selectedProject?.pre_rule_schedule_week_start ? `（周一 ${selectedProject.pre_rule_schedule_week_start} 起）` : ''} ${selectedProject?.pre_rule_schedule_member_count || 0} / ${projectPendingMembers.length} 人已确认；仍需确认 ${projectPendingScheduleMissingNames}`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
-          <el-alert v-if="projectRuleMode && projectRuleMissing && projectPreRuleReady" :title="`首周 ${projectPendingMembers.length} 人个人排班已确认；可建立现场轮休规则。规则保存前计划待生效，不能打卡`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRuleMissing && !projectPreRuleReady" :title="`请逐人确认完整排班周期：${selectedProject?.pre_rule_schedule_member_count || 0} / ${projectPendingMembers.length} 人已确认；仍需确认 ${projectPendingScheduleMissingNames}`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
+          <el-alert v-if="projectRuleMode && projectRuleMissing && projectPreRuleReady" :title="`${projectPendingMembers.length} 人的完整个人排班已确认；可建立现场轮休规则。规则保存前计划待生效，不能打卡`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectPendingMembers.length && !projectRuleMissing && !projectActivationError" :title="`${projectPendingMembers.length} 位人员待生效；全部启用后才能按本项目打卡和排班`" type="warning" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && projectAssignedCount" :title="`规则已保存，${projectAssignedCount} 位人员已启用；已确认的未来排班正式生效，可打开个人排班查看`" type="success" :closable="false" show-icon style="margin-bottom:12px" />
           <el-alert v-if="projectRuleMode && projectRotationReady && !projectPendingMembers.length && !projectAssignedCount" title="规则已保存，但项目暂无已启用人员；请返回项目库确认组长和组员名单" type="info" :closable="false" show-icon style="margin-bottom:12px" />
@@ -1152,7 +1152,7 @@
                   </el-checkbox-group>
                 </div>
                 <div v-if="ruleForm.extra.rule_type === 'rotation'" class="free-time-row">
-                  <span v-if="projectRuleMode">不按星期限定日期。先在本项目个人排班中确认组长及全部组员的共同首周计划，再保存规则；规则保存后计划正式生效。</span>
+                  <span v-if="projectRuleMode">不按星期限定日期。先在本项目个人排班中逐人确认完整周期，再保存规则；规则保存后属于本项目的日期正式生效。</span>
                   <span v-else>不按星期限定日期。新项目先确认人员和个人排班，再关联现场轮休规则；已配置项目可从项目库继续按周排班。</span>
                 </div>
                 <div class="free-time-row">
@@ -3644,7 +3644,7 @@ const ruleTypeOptions = [
   { value: 'fixed', label: '固定时间上下班', desc: '所有人按相同时间打卡，适用于办公室坐班。' },
   { value: 'shift', label: '按排班上下班', desc: '按班次结果或自选班次打卡，适用于门店/流水线。' },
   { value: 'free', label: '自由上下班', desc: '不固定时间，可随时打卡只统计工时。' },
-  { value: 'rotation', label: '现场轮休', desc: '按个人日期排班，自由上下班，休息日出勤确认后攒休。' },
+  { value: 'rotation', label: '现场轮休', desc: '按个人日期排班，自由上下班；每满六个有效工作日获得一天休息额度。' },
 ]
 const weekdayOptions = [
   { label: '周一', value: 1 },

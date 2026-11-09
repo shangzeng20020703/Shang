@@ -637,7 +637,7 @@ async def rollup(db, record):
             notes.append(f"{segment.project_name}：{issue}")
     record.anomaly_type = "; ".join(notes)[:200] or None
     record.project_segments = [segment_view(segment) for segment in segments]
-    pending_rotation = any(((s.rule_snapshot.get("_runtime") or {}).get("rotation") or {}).get("kind") == "pending" for s in segments)
+    pending_rotation = any(((s.rule_snapshot.get("_runtime") or {}).get("rotation") or {}).get("kind") in {"pending", "pending_rest"} for s in segments)
     record.display_status = "待确认" if pending_rotation else ("待核对" if any(segment.needs_review for segment in segments) else ("异常" if notes else "正常"))
     return True
 

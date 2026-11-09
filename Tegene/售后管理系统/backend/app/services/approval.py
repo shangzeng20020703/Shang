@@ -7487,6 +7487,57 @@ async def _approval_record_actions_for_node(
     return [str(action or "").lower() for (action,) in result.all()]
 
 
+async def _ensure_rotation_overtime_credit_conflict(db: AsyncSession, instance: ApprovalInstance) -> None:
+    """Reject rest-conversion approval before its terminal event can become stuck."""
+    if _instance_text(instance, "module") != "overtime":
+        return
+    form = _instance_form_data(instance)
+    policy = str(form.get("pay_policy") or "").strip().lower()
+    from app.services.rotation import REST_POLICIES
+    from app.services.rotation_entitlement import policy as rotation_entitlement_policy
+    from app.models.rotation_entitlement import RotationWorkFact
+    from app.models.overtime import OvertimeRequest
+
+    overtime = await db.get(OvertimeRequest, instance.business_id) if instance.business_id else None
+    if overtime:
+        start_day = end_day = overtime.overtime_date
+        employee_id = overtime.employee_id
+        if policy not in REST_POLICIES:
+            from app.services.attendance import AttendanceRecordService
+            if await AttendanceRecordService.overtime_request_converts_to_comp_time(db, overtime):
+                policy = "comp_time"
+    else:
+        if policy not in REST_POLICIES:
+            return
+        period = form.get("duration") or form.get("overtime_duration")
+        if isinstance(period, dict):
+            start_raw = period.get("start") or period.get("start_time")
+            end_raw = period.get("end") or period.get("end_time")
+        else:
+            start_raw = form.get("overtime_date") or form.get("date") or form.get("start_at") or form.get("start_time")
+            end_raw = form.get("end_at") or form.get("end_time") or start_raw
+        try:
+            start_day = _parse_trip_date(start_raw, "overtime_start")
+            end_day = _parse_trip_date(end_raw, "overtime_end")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="加班转调休须填写可核对的出勤日期") from exc
+        employee_id = int(form.get("employee_id") or instance.applicant_id)
+    if policy not in REST_POLICIES:
+        return
+    rolling_policy = await rotation_entitlement_policy(db)
+    if not rolling_policy or end_day < rolling_policy.effective_date:
+        return
+    if end_day < start_day or (end_day - start_day).days > 62:
+        raise HTTPException(status_code=422, detail="请核对加班转调休的日期范围")
+    duplicated = await db.scalar(select(RotationWorkFact.id).where(
+        RotationWorkFact.employee_id == employee_id,
+        RotationWorkFact.work_date >= start_day,
+        RotationWorkFact.work_date <= end_day,
+        RotationWorkFact.units > 0).limit(1))
+    if duplicated:
+        raise HTTPException(status_code=409, detail="该日期已计入现场轮休有效出勤，不能再审批加班转调休")
+
+
 async def process_approval(
     db: AsyncSession,
     instance_id: int,
@@ -7580,6 +7631,9 @@ async def process_approval(
         await db.flush()
     if pending_task is None:
         raise HTTPException(status_code=403, detail="当前用户不是该节点的待审批人")
+
+    if data.action == "approve":
+        await _ensure_rotation_overtime_credit_conflict(db, instance)
 
     now = datetime.now(timezone.utc)
     record = ApprovalRecord(

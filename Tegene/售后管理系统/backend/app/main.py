@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 async def dispatch_loop():
     from app.services.event_dispatcher import dispatch_pending
     from app.services.field_jobs import process_recalculation
+    from app.services.rotation_entitlement import settle_due_rest
 
     while True:
         try:
@@ -39,6 +40,9 @@ async def dispatch_loop():
                 await dispatch_pending(db, limit=50)
                 await db.commit()
             await process_recalculation()
+            async with async_session() as db:
+                await settle_due_rest(db)
+                await db.commit()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -50,8 +54,8 @@ async def dispatch_loop():
 async def lifespan(app):
     # Schema changes are explicit via bootstrap; startup verifies the baseline exists.
     async with async_session() as db:
-        if not await db.get(FieldSchemaVersion, 13):
-            raise RuntimeError("Run python -m app.bootstrap to apply schema version 13 first")
+        if not await db.get(FieldSchemaVersion, 14):
+            raise RuntimeError("Run python -m app.bootstrap to apply schema version 14 first")
     worker = asyncio.create_task(dispatch_loop()) if settings.BACKGROUND_JOBS else None
     yield
     if worker:

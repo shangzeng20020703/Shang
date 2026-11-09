@@ -402,6 +402,12 @@ async def approve_overtime(
     # 记录审批时间（使用 timezone.utc 确保时区感知，避免 PostgreSQL TIMESTAMPTZ 插入错误）
     now = datetime.now(timezone.utc)
     if data.action == "approve":
+        from app.services.rotation_entitlement import policy as rotation_entitlement_policy
+        rolling_policy = await rotation_entitlement_policy(db) if isinstance(db, AsyncSession) else None
+        if rolling_policy and req.overtime_date >= rolling_policy.effective_date:
+            if await AttendanceRecordService.overtime_request_converts_to_comp_time(db, req):
+                from app.services.rotation import ensure_overtime_not_credited
+                await ensure_overtime_not_credited(db, req.employee_id, req.overtime_date, "comp_time")
         req.status = "approved"
         req.approval_status = "approved"
         req.approver_id = current_user.id

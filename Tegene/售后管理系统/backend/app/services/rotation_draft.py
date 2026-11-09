@@ -18,6 +18,7 @@ from app.models.audit_log import AuditLog
 from app.models.employee import Employee
 from app.models.field_service import FieldProject, FieldProjectPendingMember
 from app.models.rotation import RotationDay, RotationDraftDay
+from app.models.rotation_person_plan import RotationPersonalPlan, RotationPersonalPlanDay
 from app.schemas.notification import NotificationCreate
 from app.services import field_roles
 from app.services.field_membership import lock_person, project_on
@@ -93,7 +94,62 @@ async def project_status(db, project_id, current_day=None):
     members = await pending_ids(db, project_id)
     rows = (await db.scalars(select(RotationDraftDay).where(
         RotationDraftDay.project_id == project_id))).all()
-    return status_for_rows(members, rows, current_day or today())
+    return await _project_readiness(db, project_id, members, rows, current_day or today())
+
+
+async def _project_readiness(db, project_id, members, legacy_rows, current_day):
+    """Each confirmed person needs one complete, future, independent pattern."""
+    if not members:
+        return status_for_rows(members, legacy_rows, current_day)
+    plans = list((await db.scalars(select(RotationPersonalPlan).where(
+        RotationPersonalPlan.employee_id.in_(members)))).all())
+    by_person = defaultdict(list)
+    for plan in plans:
+        by_person[plan.employee_id].append(plan)
+    plan_rows = list((await db.scalars(select(RotationPersonalPlanDay).where(
+        RotationPersonalPlanDay.employee_id.in_(members)))).all())
+    already_published = set((await db.execute(select(
+        RotationDay.employee_id, RotationDay.work_date).where(
+        RotationDay.employee_id.in_(members)))).all())
+    by_plan = defaultdict(list)
+    for row in plan_rows:
+        by_plan[row.plan_id].append(row)
+    complete, starts = set(), []
+    for eid in members:
+        for plan in by_person[eid]:
+            length = (plan.end_date - plan.start_date).days + 1
+            required = {"six_one": 7, "twelve_two": 14,
+                        "eighteen_three": 21, "custom": 7}.get(plan.template, 999)
+            rows = by_plan[plan.id]
+            present = {row.work_date for row in rows}
+            future_owned = any(row.project_id == project_id and row.work_date >= current_day for row in rows)
+            continuing = any((eid, row.work_date) in already_published for row in rows)
+            if length >= required and len(present) == length and all(
+                day in present for day in dates(plan.start_date, plan.end_date)) and future_owned and (
+                    plan.start_date >= current_day or continuing):
+                complete.add(eid)
+                starts.append(min(row.work_date for row in rows if row.project_id == project_id and
+                                  row.work_date >= current_day))
+                break
+        if eid not in complete:
+            # Preserve already-confirmed legacy whole-week plans during upgrade.
+            own = [row for row in legacy_rows if row.employee_id == eid]
+            if own and status_for_rows({eid}, own, current_day)["pre_rule_schedule_ready"]:
+                complete.add(eid)
+                starts.append(min(row.work_date for row in own if row.work_date >= current_day))
+    legacy = status_for_rows(members, legacy_rows, current_day)
+    first = min(starts, default=legacy["pre_rule_schedule_week_start"])
+    return {"pre_rule_schedule_count": len([row for row in legacy_rows
+                if row.employee_id in members and row.work_date >= current_day]),
+            "pre_rule_schedule_member_count": len(complete),
+            "pre_rule_schedule_employee_ids": sorted({row.employee_id for row in legacy_rows
+                if row.employee_id in members and row.work_date >= current_day}),
+            "pre_rule_schedule_ready": complete == members,
+            "pre_rule_schedule_week_start": monday(first),
+            "pre_rule_schedule_publish_start": first,
+            "pre_rule_schedule_week_end": max((p.end_date for p in plans if p.employee_id in complete),
+                                                default=legacy["pre_rule_schedule_week_end"]),
+            "pre_rule_schedule_missing_member_ids": sorted(members - complete)}
 
 
 async def project_statuses(db, project_ids, pending_rows, current_day=None):
@@ -109,7 +165,7 @@ async def project_statuses(db, project_ids, pending_rows, current_day=None):
         by_project[row.project_id].append(row)
     for row in pending_rows:
         members[row.project_id].add(row.employee_id)
-    return {pid: status_for_rows(members[pid], by_project[pid], current_day or today())
+    return {pid: await _project_readiness(db, pid, members[pid], by_project[pid], current_day or today())
             for pid in projects}
 
 
@@ -124,8 +180,7 @@ async def require_ready(db, project_id):
     names = dict((await db.execute(select(Employee.id, Employee.name).where(
         Employee.id.in_(status["pre_rule_schedule_missing_member_ids"])))).all())
     missing = "、".join(names.get(eid, str(eid)) for eid in status["pre_rule_schedule_missing_member_ids"])
-    week = status["pre_rule_schedule_week_start"]
-    raise HTTPException(422, f"请先确认 {week} 所在周全部项目人员的个人排班；未完整确认：{missing}")
+    raise HTTPException(422, f"请先逐人确认完整的个人排班周期；未完整确认：{missing}")
 
 
 async def _check_other_project(db, employee_id, project_id, day):
@@ -137,6 +192,11 @@ async def _check_other_project(db, employee_id, project_id, day):
         RotationDraftDay.employee_id == employee_id, RotationDraftDay.work_date == day))
     if draft and draft.project_id != project_id:
         raise HTTPException(409, f"人员 {employee_id} 在 {day} 已于其他项目确认待生效排班")
+    personal = await db.scalar(select(RotationPersonalPlanDay).where(
+        RotationPersonalPlanDay.employee_id == employee_id,
+        RotationPersonalPlanDay.work_date == day))
+    if personal:
+        raise HTTPException(409, f"人员 {employee_id} 在 {day} 已有逐人确认的排班")
     existing = await project_on(db, employee_id, day)
     if existing and existing[3].id != project_id:
         raise HTTPException(409, f"人员 {employee_id} 在 {day} 已属于其他项目，请先办理项目调动")
@@ -236,6 +296,18 @@ async def cancel_person(db, user, project_id, employee_id):
     before = [draft_view(row) for row in rows]
     for row in rows:
         await db.delete(row)
+    personal_plans = list((await db.scalars(select(RotationPersonalPlan).where(
+        RotationPersonalPlan.context_project_id == project_id,
+        RotationPersonalPlan.employee_id == employee_id))).all())
+    if personal_plans:
+        personal_rows = list((await db.scalars(select(RotationPersonalPlanDay).where(
+            RotationPersonalPlanDay.plan_id.in_([plan.id for plan in personal_plans])))).all())
+        for row in personal_rows:
+            if row.project_id not in {None, project_id}:
+                raise HTTPException(409, "个人计划已关联其他项目，请先处理项目调动")
+            await db.delete(row)
+        for plan in personal_plans:
+            await db.delete(plan)
     if rows:
         audit(db, user, "rotation_pre_rule_cancel", before, [])
     return {"count": len(rows), "phase": "pre_rule"}
@@ -273,10 +345,17 @@ async def finalize(db, user, project_id, rule, expected_member_ids):
         if await db.scalar(select(AttendanceRecord.id).where(
                 AttendanceRecord.employee_id == row.employee_id, AttendanceRecord.date == row.work_date)):
             raise HTTPException(409, f"人员 {row.employee_id} 在 {row.work_date} 已有打卡记录")
+        personal = await db.scalar(select(RotationPersonalPlanDay).where(
+            RotationPersonalPlanDay.employee_id == row.employee_id,
+            RotationPersonalPlanDay.work_date == row.work_date))
+        rest_type = (personal.rest_type if personal else
+                     "ordinary" if row.kind == "rest" and row.original_kind == "rest" else
+                     "concentrated" if row.kind == "rest" else None)
         published = RotationDay(employee_id=row.employee_id, project_id=project_id,
             work_date=row.work_date, cycle_start=row.cycle_start,
             original_kind=row.original_kind, kind=row.kind,
-            rule_snapshot=rule_with_shift(rule, row.shift_label), revision=1,
+            rule_snapshot={**rule_with_shift(rule, row.shift_label),
+                           "_rotation_rest_type": rest_type}, revision=1,
             reason=row.reason, updated_by=user.id)
         db.add(published)
         await db.flush()

@@ -45,6 +45,50 @@ class RotationPublish(ReasonInput):
         return self
 
 
+class PersonPlanDayEdit(BaseModel):
+    date: date
+    kind: Literal["work", "rest"]
+    # Omitted means the current project; explicit null means project TBD.
+    project_id: int | None = Field(default=None, gt=0)
+    shift_label: Literal["day", "night"] | None = None
+
+
+class PersonPlanInput(ReasonInput):
+    plan_id: int | None = Field(default=None, gt=0)
+    start_date: date
+    end_date: date
+    cycle_start: date
+    template: Literal["six_one", "twelve_two", "eighteen_three", "custom"]
+    days: list[PersonPlanDayEdit] = Field(default_factory=list, max_length=366)
+    reason: str = Field(default="周期排班", min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        length = (self.end_date - self.start_date).days + 1
+        required = {"six_one": 7, "twelve_two": 14, "eighteen_three": 21, "custom": 7}[self.template]
+        if length < required or length > 366 or self.cycle_start > self.start_date:
+            raise ValueError(f"个人排班须覆盖至少 {required} 天，最多 366 天，周期起点不能晚于开始日期")
+        if len({item.date for item in self.days}) != len(self.days):
+            raise ValueError("个人排班日期不可重复")
+        if any(not self.start_date <= item.date <= self.end_date for item in self.days):
+            raise ValueError("个人排班调整日期不在范围内")
+        if self.template == "custom" and len(self.days) != length:
+            raise ValueError("自定义排班须逐日确认整个日期范围")
+        return self
+
+
+class PersonPlanBind(ReasonInput):
+    plan_id: int = Field(gt=0)
+    dates: list[date] = Field(min_length=1, max_length=366)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def no_duplicates(self):
+        if len(set(self.dates)) != len(self.dates):
+            raise ValueError("待分配项目日期不可重复")
+        return self
+
+
 class RotationAdjust(ReasonInput):
     employee_ids: list[int] = Field(default_factory=list, max_length=100)
     days: list[DayEdit] = Field(default_factory=list, max_length=366)

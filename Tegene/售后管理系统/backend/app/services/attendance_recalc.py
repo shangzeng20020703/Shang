@@ -38,6 +38,9 @@ class AttendanceRecalcService:
         )
         existing = result.scalar_one_or_none()
         if existing is not None:
+            if isinstance(db, AsyncSession):
+                from app.services.rotation_entitlement import sync_employee_through
+                await sync_employee_through(db, employee_id, work_date)
             return existing
 
         task = AttendanceRecalcTask(
@@ -49,4 +52,7 @@ class AttendanceRecalcService:
         )
         db.add(task)
         await db.flush()
+        if isinstance(db, AsyncSession):
+            from app.services.rotation_entitlement import sync_employee_through
+            await sync_employee_through(db, employee_id, work_date)
         return task
