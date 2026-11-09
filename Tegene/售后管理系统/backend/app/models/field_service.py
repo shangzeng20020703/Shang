@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     JSON,
@@ -41,6 +42,26 @@ class FieldProject(Base):
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class FieldProjectCatalog(Base):
+    """Imported project identity and location, including projects not configured yet.
+
+    Project numbers are the stable join key to the read-only Tegene catalog and
+    the local project. No customer, staff or attendance rule is invented here.
+    """
+
+    __tablename__ = "field_project_catalog"
+    code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    name: Mapped[str] = mapped_column(String(150))
+    address: Mapped[str] = mapped_column(String(500), default="")
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    require_gps: Mapped[bool] = mapped_column(Boolean, default=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    imported_by: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
 
 
 class FieldProjectPendingMember(Base):

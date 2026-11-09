@@ -8,6 +8,7 @@ from sqlalchemy import select, delete, func
 from app.models.field_service import (
     FieldCustomer,
     FieldProject,
+    FieldProjectCatalog,
     FieldSite,
     FieldAssignment,
     FieldAssignmentDay,
@@ -368,6 +369,12 @@ async def save_project(db, user, data, item_id=None):
     obj = await db.get(FieldProject, item_id) if item_id else FieldProject()
     if obj is None:
         raise HTTPException(404, "项目不存在")
+    if item_id and await db.get(FieldProjectCatalog, obj.code):
+        if data.code.strip().upper() != obj.code:
+            raise HTTPException(409, "项目编号与导入表关联，不能直接修改")
+    catalog = await db.get(FieldProjectCatalog, data.code.strip().upper())
+    if catalog and data.name.strip() != catalog.name:
+        raise HTTPException(409, "该项目名称以导入的项目表为准，请重新导入表格更新名称")
     customer = await db.get(FieldCustomer, data.customer_id)
     if not customer or not customer.is_active:
         raise HTTPException(422, "客户无效")

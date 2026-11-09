@@ -131,6 +131,7 @@ from app.services.attendance import (
     PunchCorrectionService,
     ShiftScheduleService,
     WorkCalendarService,
+    catalog_geofence,
     create_outside_approval as create_outside_approval_service,
 )
 
@@ -2902,6 +2903,66 @@ async def get_project_rule(
     return rule
 
 
+@router.get("/projects/{project_id}/rule-defaults")
+async def get_project_rule_defaults(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """Expose imported project location as an editable new-rule default."""
+    from app.services.field_roles import require_project_manage
+    from app.services.field_project_import import catalog_for_project
+
+    project = await require_project_manage(db, current_user, project_id)
+    catalog = await catalog_for_project(db, project_id)
+    location = catalog_geofence(catalog)
+    return {
+        "project_id": project_id,
+        "project_code": project.code,
+        "project_name": (catalog or {}).get("name") or project.name,
+        "require_gps": bool(catalog["require_gps"]) if catalog else None,
+        "needs_manual_location": bool(catalog and catalog["require_gps"] and location is None),
+        "location": location,
+    }
+
+
+def _apply_catalog_to_project_rule_payload(payload: dict, catalog: Optional[dict]) -> None:
+    if not catalog:
+        return
+    extra = dict(payload.get("extra_config") or {})
+    methods = AttendanceRecordService._parse_text_set(extra.get("check_methods"))
+    if catalog["require_gps"]:
+        methods.add("GPS")
+        # A hand-adjusted valid location takes precedence over the Excel default.
+        locations = extra.get("locations") or []
+        has_location = any(
+            isinstance(item, dict) and AttendanceRuleService.valid_geofence(
+                item.get("latitude"), item.get("longitude"),
+                item.get("radius") if item.get("radius") is not None else 300,
+            ) for item in locations
+        ) if isinstance(locations, list) else False
+        lat = payload.get("gps_latitude")
+        lng = payload.get("gps_longitude")
+        radius = payload.get("gps_radius_meters")
+        has_primary = AttendanceRuleService.valid_geofence(lat, lng, 300 if radius is None else radius)
+        if not has_location and not has_primary:
+            imported = catalog_geofence(catalog)
+            if imported:
+                extra["locations"] = [imported] + list(locations if isinstance(locations, list) else [])
+                payload["gps_latitude"] = imported["latitude"]
+                payload["gps_longitude"] = imported["longitude"]
+                payload["gps_radius_meters"] = imported["radius"]
+        payload["require_gps"] = True
+    else:
+        methods.discard("GPS")
+        payload["require_gps"] = False
+        payload["gps_latitude"] = None
+        payload["gps_longitude"] = None
+        payload["gps_radius_meters"] = None
+    extra["check_methods"] = sorted(methods)
+    payload["extra_config"] = extra
+
+
 @router.post("/projects/{project_id}/rule", response_model=AttendanceRuleOut,
              status_code=status.HTTP_201_CREATED)
 async def create_project_rule(
@@ -2914,6 +2975,7 @@ async def create_project_rule(
     from app.schemas.field_service import SiteInput
     from app.services import field_service
     from app.services.field_roles import require_project_manage
+    from app.services.field_project_import import catalog_for_project
 
     project = await require_project_manage(db, current_user, project_id)
     if await field_service.project_site(db, project_id):
@@ -2931,6 +2993,8 @@ async def create_project_rule(
         await rotation_draft.require_ready(db, project_id)
 
     payload = data.model_dump()
+    catalog = await catalog_for_project(db, project_id)
+    _apply_catalog_to_project_rule_payload(payload, catalog)
     # Project managers cannot turn a project write into an organisation-wide
     # rule by supplying a different scope or department in the request body.
     payload["department_id"] = None
@@ -2944,9 +3008,19 @@ async def create_project_rule(
     rule = await AttendanceRuleService.create(
         db, AttendanceRuleCreate.model_validate(payload), current_user=current_user
     )
+    configured_locations = (payload.get("extra_config") or {}).get("locations") or []
+    selected_location = next((item for item in configured_locations if isinstance(item, dict)
+                              and AttendanceRuleService.valid_geofence(
+                                  item.get("latitude"), item.get("longitude"),
+                                  item.get("radius") if item.get("radius") is not None else 300,
+                              )), None)
+    site_address = str((selected_location or {}).get("address")
+                       or (selected_location or {}).get("name")
+                       or (catalog or {}).get("address") or "")
     site = await field_service.save_site(
         db, current_user,
-        SiteInput(project_id=project_id, name=project.name, address="", rule_id=rule.id),
+        SiteInput(project_id=project_id, name=project.name,
+                  address=site_address, rule_id=rule.id),
     )
     # save_site validates, activates and publishes the first rotation plan in
     # this transaction, including callers that bind a rule via /field/sites.
@@ -2966,6 +3040,7 @@ async def update_project_rule(
     from app.schemas.field_service import SiteInput
     from app.services import field_service
     from app.services.field_roles import require_project_manage
+    from app.services.field_project_import import catalog_for_project
     from app.models.attendance import AttendanceRule
     project = await require_project_manage(db, current_user, project_id)
     site = await field_service.project_site(db, project_id)
@@ -2974,6 +3049,16 @@ async def update_project_rule(
     source = await db.get(AttendanceRule, site.rule_id)
     if not source:
         raise HTTPException(404, "考勤规则不存在")
+    catalog = await catalog_for_project(db, project_id)
+    merged_extra = {**(source.extra_config or {}), **(data.extra_config or {})}
+    source_gps = bool(source.require_gps) or "GPS" in AttendanceRecordService._parse_text_set(
+        (source.extra_config or {}).get("check_methods"))
+    effective_gps = (
+        (source.require_gps if data.require_gps is None else data.require_gps)
+        or "GPS" in AttendanceRecordService._parse_text_set(merged_extra.get("check_methods"))
+    )
+    if catalog and bool(effective_gps) != source_gps and bool(effective_gps) != bool(catalog["require_gps"]):
+        raise HTTPException(409, "定位要求与项目表不符，请先在导入预览中确认变更")
     # A new rule ID keeps other projects, historical shifts, and punched rule
     # snapshots unchanged. Only this project's future unpunched shifts move.
     copy_name = (data.name or f"{source.name}-{project.code}-项目版")[:100]

@@ -54,7 +54,7 @@ import math
 import re
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -145,6 +145,43 @@ class AttendanceRuleService:
                 raise ValueError()
         except (ValueError, ArithmeticError):
             raise ValueError("现场轮休须设置大于0且不超过24小时的每日工时")
+
+    @staticmethod
+    def valid_geofence(latitude: Any, longitude: Any, radius: Any) -> bool:
+        """Accept only finite coordinates and a positive radius for GPS enforcement."""
+        try:
+            lat = Decimal(str(latitude))
+            lng = Decimal(str(longitude))
+            distance = Decimal(str(radius))
+        except (InvalidOperation, TypeError, ValueError):
+            return False
+        return (
+            lat.is_finite() and lng.is_finite() and distance.is_finite()
+            and -90 <= lat <= 90 and -180 <= lng <= 180 and distance >= 1
+        )
+
+    @staticmethod
+    def _validate_gps_geofence(payload: Dict[str, Any]) -> None:
+        extra = payload.get("extra_config") or {}
+        extra = extra if isinstance(extra, dict) else {}
+        methods = AttendanceRecordService._parse_text_set(extra.get("check_methods"))
+        if not payload.get("require_gps") and "GPS" not in methods:
+            return
+        locations = extra.get("locations") or []
+        if isinstance(locations, list) and any(
+            isinstance(item, dict) and AttendanceRuleService.valid_geofence(
+                item.get("latitude"), item.get("longitude"),
+                item.get("radius", item.get("radius_meter", item.get("gps_radius_meters", 300))),
+            )
+            for item in locations
+        ):
+            return
+        if AttendanceRuleService.valid_geofence(
+            payload.get("gps_latitude"), payload.get("gps_longitude"),
+            300 if payload.get("gps_radius_meters") is None else payload.get("gps_radius_meters"),
+        ):
+            return
+        raise ValueError("启用GPS打卡须设置有效的打卡位置和大于0米的范围")
 
     @staticmethod
     def _operator(current_user: Optional[Employee]) -> tuple[Optional[int], Optional[str]]:
@@ -424,6 +461,7 @@ class AttendanceRuleService:
         """
         payload = data.model_dump()
         AttendanceRuleService._validate_rotation(payload.get("extra_config"))
+        AttendanceRuleService._validate_gps_geofence(payload)
         conflicts = await AttendanceRuleService.detect_conflicts(db, payload)
         if conflicts:
             raise ValueError(f"规则冲突: {conflicts[0]['name']}（ID={conflicts[0]['id']}）")
@@ -504,6 +542,13 @@ class AttendanceRuleService:
             return None
         update_data = data.model_dump(exclude_unset=True)
         AttendanceRuleService._validate_rotation(update_data.get("extra_config", rule.extra_config))
+        AttendanceRuleService._validate_gps_geofence({
+            "require_gps": update_data.get("require_gps", rule.require_gps),
+            "gps_latitude": update_data.get("gps_latitude", rule.gps_latitude),
+            "gps_longitude": update_data.get("gps_longitude", rule.gps_longitude),
+            "gps_radius_meters": update_data.get("gps_radius_meters", rule.gps_radius_meters),
+            "extra_config": update_data.get("extra_config", rule.extra_config),
+        })
         merged = {
             "department_id": update_data.get("department_id", rule.department_id),
             "effective_date": update_data.get("effective_date", rule.effective_date),
@@ -635,6 +680,157 @@ class AttendanceRuleService:
             .order_by(AttendanceRuleLog.created_at.desc(), AttendanceRuleLog.id.desc())
         )
         return result.scalars().all()
+
+
+def catalog_geofence(catalog: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Turn an imported project place into one editable rule location."""
+    if not catalog:
+        return None
+    radius = catalog.get("radius_m")
+    radius = 300 if radius is None else radius
+    lat, lng = catalog.get("latitude"), catalog.get("longitude")
+    if not AttendanceRuleService.valid_geofence(lat, lng, radius):
+        return None
+    address = str(catalog.get("address") or "").strip()
+    return {
+        "name": address or str(catalog.get("name") or "打卡地点"),
+        "address": address,
+        "latitude": float(lat),
+        "longitude": float(lng),
+        "radius": int(radius),
+        "source": "project_catalog",
+        "project_code": str(catalog.get("code") or ""),
+    }
+
+
+def _preserved_manual_locations(rule: AttendanceRule) -> List[Dict[str, Any]]:
+    """Replace one legacy primary fence, retaining any additional manual sites."""
+    locations = (rule.extra_config or {}).get("locations") or []
+    if not isinstance(locations, list):
+        return []
+    if any(isinstance(item, dict) and item.get("source") == "project_catalog"
+           for item in locations):
+        return [dict(item) for item in locations if isinstance(item, dict)
+                and item.get("source") != "project_catalog"]
+    primary_lat = rule.gps_latitude
+    primary_lng = rule.gps_longitude
+    has_primary = primary_lat is not None and primary_lng is not None
+    primary_removed = False
+    retained: List[Dict[str, Any]] = []
+    for item in locations:
+        if not isinstance(item, dict):
+            continue
+        if not primary_removed:
+            if has_primary:
+                try:
+                    same_primary = (
+                        abs(Decimal(str(item.get("latitude"))) - Decimal(str(primary_lat))) <= Decimal("0.0000001")
+                        and abs(Decimal(str(item.get("longitude"))) - Decimal(str(primary_lng))) <= Decimal("0.0000001")
+                    )
+                except (InvalidOperation, TypeError, ValueError):
+                    same_primary = False
+                if same_primary:
+                    primary_removed = True
+                    continue
+            else:
+                # Older project rules may keep their primary only in the first
+                # extra-config location, with no separate GPS columns.
+                primary_removed = True
+                continue
+        retained.append(dict(item))
+    return retained
+
+
+def _existing_primary_radius(rule: AttendanceRule) -> int:
+    """Keep a manager-adjusted project radius when the spreadsheet moves a site."""
+    locations = (rule.extra_config or {}).get("locations") or []
+    if isinstance(locations, list):
+        marked = next((item for item in locations if isinstance(item, dict)
+                       and item.get("source") == "project_catalog"), None)
+        if marked is not None:
+            radius = marked.get("radius")
+            if AttendanceRuleService.valid_geofence(marked.get("latitude"), marked.get("longitude"), radius):
+                return max(1, int(Decimal(str(radius))))
+    if rule.gps_radius_meters and rule.gps_radius_meters > 0:
+        return int(rule.gps_radius_meters)
+    if isinstance(locations, list) and locations:
+        first = locations[0]
+        if isinstance(first, dict):
+            radius = first.get("radius")
+            if AttendanceRuleService.valid_geofence(first.get("latitude"), first.get("longitude"), radius):
+                return max(1, int(Decimal(str(radius))))
+    return 300
+
+
+async def apply_catalog_location_to_project_rule(
+    db: AsyncSession,
+    project_id: int,
+    catalog: Dict[str, Any],
+    current_user: Employee,
+) -> AttendanceRule:
+    """Version one active rule after an explicit project-import confirmation.
+
+    Only the catalog-managed location is replaced; hand-entered locations and
+    existing rule/shift history stay intact.
+    """
+    from app.schemas.field_service import SiteInput
+    from app.services import field_service
+    from app.services.field_roles import require_project_manage
+
+    project = await require_project_manage(db, current_user, project_id)
+    site = await field_service.project_site(db, project_id)
+    if not site:
+        raise ValueError("项目尚未建立打卡规则")
+    source = await AttendanceRuleService.get(db, site.rule_id)
+    if source is None:
+        raise ValueError("项目考勤规则不存在")
+    imported = catalog_geofence(catalog)
+    if catalog.get("require_gps") and imported is None:
+        raise ValueError(f"{project.code} 需要定位，请先补全项目打卡位置")
+    if imported is not None:
+        imported["radius"] = _existing_primary_radius(source)
+
+    extra = dict(source.extra_config or {})
+    manual_locations = _preserved_manual_locations(source)
+    extra["locations"] = ([imported] if imported else []) + manual_locations
+    methods = AttendanceRecordService._parse_text_set(extra.get("check_methods"))
+    if catalog.get("require_gps"):
+        methods.add("GPS")
+    else:
+        methods.discard("GPS")
+    extra["check_methods"] = sorted(methods)
+    extra["scope_mode"] = "project"
+    extra["project_id"] = project_id
+    extra["assigned_employee_ids"] = []
+
+    name = f"{source.name}-{project.code}-项目版"[:100]
+    new_rule = await AttendanceRuleService.copy_rule(db, source.id, name, current_user=current_user)
+    if new_rule is None:
+        raise ValueError("项目考勤规则不存在")
+    rule = await AttendanceRuleService.update(
+        db, new_rule.id,
+        AttendanceRuleUpdate.model_validate({
+            "name": name,
+            "is_active": True,
+            "location_id": site.location_id,
+            "department_id": None,
+            "require_gps": bool(catalog.get("require_gps")),
+            "gps_latitude": imported["latitude"] if imported else None,
+            "gps_longitude": imported["longitude"] if imported else None,
+            "gps_radius_meters": imported["radius"] if imported else None,
+            "extra_config": extra,
+        }),
+        current_user=current_user,
+    )
+    if rule is None:
+        raise ValueError("项目考勤规则不存在")
+    await field_service.save_site(
+        db, current_user,
+        SiteInput(project_id=project_id, name=site.name,
+                  address=str(catalog.get("address") or site.address or ""),
+                  rule_id=rule.id), site.id,
+    )
+    return rule
 
 
 class ShiftScheduleService:
@@ -1458,7 +1654,14 @@ class AttendanceRecordService:
                     continue
                 lat = item.get("latitude")
                 lng = item.get("longitude")
-                if lat is None or lng is None:
+                radius = item.get("radius")
+                if radius is None:
+                    radius = item.get("radius_meter")
+                if radius is None:
+                    radius = item.get("gps_radius_meters")
+                if radius is None:
+                    radius = 300
+                if not AttendanceRuleService.valid_geofence(lat, lng, radius):
                     continue
                 out.append(
                     {
@@ -1466,17 +1669,20 @@ class AttendanceRecordService:
                         "address": str(item.get("address") or item.get("name") or ""),
                         "latitude": lat,
                         "longitude": lng,
-                        "radius": item.get("radius") or item.get("radius_meter") or item.get("gps_radius_meters") or 300,
+                        "radius": radius,
                     }
                 )
-        if rule.gps_latitude is not None and rule.gps_longitude is not None:
+        primary_radius = rule.gps_radius_meters if rule.gps_radius_meters is not None else 300
+        if AttendanceRuleService.valid_geofence(
+            rule.gps_latitude, rule.gps_longitude, primary_radius
+        ):
             out.append(
                 {
                     "name": "规则默认地点",
                     "address": "规则默认地点",
                     "latitude": rule.gps_latitude,
                     "longitude": rule.gps_longitude,
-                    "radius": rule.gps_radius_meters or 300,
+                    "radius": primary_radius,
                 }
             )
         return out
@@ -1926,8 +2132,9 @@ class AttendanceRecordService:
 
         gps_errors: List[str] = []
         gps_valid = not require_gps
+        missing_geofence = require_gps and not configured_locations
         geofence_outside_error: Optional[str] = None
-        if gps_lat is not None and gps_lng is not None and configured_locations:
+        if require_gps and gps_lat is not None and gps_lng is not None and configured_locations:
             nearest_any: Optional[Tuple[float, int]] = None
             geofence_passed = False
             for loc in configured_locations:
@@ -1967,7 +2174,7 @@ class AttendanceRecordService:
                 if not gps_valid and nearest is not None:
                     gps_errors.append(f"超出打卡范围: 距离{nearest[0]:.0f}米, 限制{nearest[1]}米")
             else:
-                gps_valid = True
+                gps_errors.append("打卡规则缺少有效打卡范围")
 
         wifi_errors: List[str] = []
         wifi_valid = not require_wifi
@@ -2000,6 +2207,10 @@ class AttendanceRecordService:
         )
         if geofence_outside_error and geofence_outside_error not in errors and not has_alternative_method_passed:
             errors.append(geofence_outside_error)
+        # A stale rule with GPS enabled but no usable fence must never pass,
+        # including when its Wi-Fi method is configured as an alternative.
+        if missing_geofence and "打卡规则缺少有效打卡范围" not in errors:
+            errors.append("打卡规则缺少有效打卡范围")
 
         if AttendanceRecordService._requires_photo_each_punch(rule) and not photo_url:
             errors.append("缺少打卡照片")

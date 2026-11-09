@@ -2,12 +2,13 @@ from datetime import date
 from uuid import UUID
 from pathlib import Path
 from fastapi.responses import FileResponse
-from fastapi import APIRouter, Depends, Query, UploadFile, File, Response, HTTPException
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form, Response, HTTPException
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_roles
 from app.schemas.field_service import (
     CustomerInput,
     ProjectInput,
+    CatalogProjectPromoteInput,
     SiteInput,
     AssignmentInput,
     TegeneProjectInput,
@@ -26,6 +27,46 @@ from app.schemas.field_service import TransferInput
 from app.schemas.field_roster import ROSTER_COLUMNS
 
 router = APIRouter()
+
+
+@router.get("/projects/catalog")
+async def project_catalog(db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_project_import import list_catalog
+    return await list_catalog(db, user)
+
+
+@router.post("/projects/import/preview")
+async def preview_project_import(file: UploadFile = File(...),
+                                 db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_project_import import MAX_FILE_BYTES, preview_import
+    content = await file.read(MAX_FILE_BYTES + 1)
+    return await preview_import(db, user, content, file.filename)
+
+
+@router.post("/projects/import/commit")
+async def commit_project_import(file: UploadFile = File(...),
+                                preview_token: str = Form(...),
+                                confirm_active_rule_project_ids: str = Form("[]"),
+                                db=Depends(get_db), user=Depends(get_current_user)):
+    import json
+    from app.services.field_project_import import MAX_FILE_BYTES, commit_import
+    try:
+        approved = json.loads(confirm_active_rule_project_ids)
+    except (ValueError, TypeError):
+        raise HTTPException(422, "规则更新确认列表格式无效") from None
+    if (not isinstance(approved, list) or len(approved) > 5000
+            or any(not isinstance(value, int) or value <= 0 for value in approved)
+            or len(set(approved)) != len(approved)):
+        raise HTTPException(422, "规则更新确认列表格式无效")
+    content = await file.read(MAX_FILE_BYTES + 1)
+    return await commit_import(db, user, content, file.filename, preview_token, approved)
+
+
+@router.post("/projects/catalog/{code}/promote")
+async def promote_project_catalog(code: str, data: CatalogProjectPromoteInput,
+                                  db=Depends(get_db), user=Depends(get_current_user)):
+    from app.services.field_project_import import promote_catalog_project
+    return await promote_catalog_project(db, user, code, data.customer_id, data.manager_id)
 
 
 @router.get("/tegene/projects")

@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.models.audit_log import AuditLog
-from app.models.field_service import FieldCustomer, FieldProject, FieldTegeneProject
+from app.models.field_service import FieldCustomer, FieldProject, FieldProjectCatalog, FieldTegeneProject
 from app.schemas.field_service import ProjectInput
 from app.services import field_service
 
@@ -106,8 +106,12 @@ async def list_projects(db, user):
     bindings = {r.external_id: r for r in (await db.scalars(
         select(FieldTegeneProject).where(FieldTegeneProject.source_url == source)
     )).all()}
+    aliases = {r.code: r.name for r in (await db.scalars(select(FieldProjectCatalog).where(
+        FieldProjectCatalog.code.in_([p["projectNo"] for p in projects])
+    ))).all()}
     return {"configured": True, "fetched_at": datetime.now(timezone.utc), "projects": [
-        {**p, "local_project_id": bindings[p["id"]].project_id if p["id"] in bindings else None}
+        {**p, "source_name": p["name"], "name": aliases.get(p["projectNo"], p["name"]),
+         "local_project_id": bindings[p["id"]].project_id if p["id"] in bindings else None}
         for p in projects
     ]}
 
@@ -124,7 +128,10 @@ async def link_project(db, user, external_id, data):
         FieldTegeneProject.source_url == source, FieldTegeneProject.external_id == str(external_id),
     ))
     existing = await db.scalar(select(FieldProject).where(FieldProject.code == project["projectNo"]))
-    if existing and (not binding or existing.id != binding.project_id):
+    catalog = await db.get(FieldProjectCatalog, project["projectNo"])
+    if existing and binding and existing.id != binding.project_id:
+        raise HTTPException(409, "Tegene 项目绑定与本地同编号项目冲突，请管理员核对")
+    if existing and not binding and not catalog:
         raise HTTPException(409, "本地已有同编号项目，请先核对档案；不会自动覆盖或合并")
     customer_name = project["customer"] or "Tegene 未填写客户"
     customer = await db.scalar(select(FieldCustomer).where(FieldCustomer.name == customer_name))
@@ -132,13 +139,19 @@ async def link_project(db, user, external_id, data):
         customer = FieldCustomer(name=customer_name)
         db.add(customer)
         await db.flush()
-    if binding:
-        local = await db.get(FieldProject, binding.project_id)
+    display_name = catalog.name if catalog else project["name"]
+    if binding or existing:
+        local = await db.get(FieldProject, binding.project_id) if binding else existing
+        if local is None:
+            raise HTTPException(409, "Tegene 项目绑定的本地项目不存在，请管理员核对")
         # Refresh source-owned identity only. Local manager, switches, sites and shifts survive.
-        local.code, local.name, local.customer_id = project["projectNo"], project["name"], customer.id
+        local.code, local.name, local.customer_id = project["projectNo"], display_name, customer.id
+        if not binding:
+            binding = FieldTegeneProject(source_url=source, external_id=str(external_id), project_id=local.id)
+            db.add(binding)
     else:
         saved = await field_service.save_project(db, user, ProjectInput(
-            code=project["projectNo"], name=project["name"], customer_id=customer.id,
+            code=project["projectNo"], name=display_name, customer_id=customer.id,
             manager_id=data.manager_id,
         ))
         binding = FieldTegeneProject(source_url=source, external_id=str(external_id), project_id=saved["id"])
@@ -147,6 +160,7 @@ async def link_project(db, user, external_id, data):
     db.add(AuditLog(operator_id=user.id, operator_name=user.name, module="field", action="tegene_project_sync",
                     resource_type="field_project", resource_id=binding.project_id,
                     after_data=json.dumps({"source": source, "external_id": str(external_id),
-                                           "code": project["projectNo"], "name": project["name"]}, ensure_ascii=False)))
+                                           "code": project["projectNo"], "name": display_name,
+                                           "source_name": project["name"]}, ensure_ascii=False)))
     await db.flush()
     return {"project_id": binding.project_id, "synced_at": binding.synced_at}

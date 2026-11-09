@@ -1235,6 +1235,9 @@
         <div class="rule-module">
           <div class="rule-module__title"><span class="required-star">*</span>打卡方式</div>
           <div class="hint-text punch-method-tip">手机和考勤机满足任意一项即可打卡</div>
+          <el-alert v-if="projectRuleMode && !ruleForm.id && projectLocationInfo?.needs_manual_location && projectLocationInfo?.require_gps" title="项目表要求定位，但尚未提供有效坐标。请在下方添加打卡位置并设置范围，才能保存规则。" type="warning" :closable="false" show-icon class="notice" />
+          <el-alert v-else-if="projectRuleMode && !ruleForm.id && projectLocationInfo?.location" :title="`已读取项目表地点：${projectLocationInfo.location.name || projectLocationInfo.location.address}；新建规则默认使用 300 米范围，可在下方调整。`" type="info" :closable="false" show-icon class="notice" />
+          <el-alert v-if="projectLocationPending" title="项目表中的定位要求与当前规则不同。当前规则仍按原设置运行；如需应用表格要求，请在项目库的导入预览中确认更新。" type="warning" :closable="false" show-icon class="notice" />
           <el-form-item>
             <template #label>
               <span class="field-label-with-tip"><span class="required-star">*</span>选择方式<el-icon class="field-info-icon"><QuestionFilled /></el-icon></span>
@@ -1254,6 +1257,7 @@
               </div>
             </el-radio-group>
           </el-form-item>
+          <el-form-item label="校验要求"><el-checkbox-group v-model="ruleForm.check_methods"><el-checkbox value="GPS" :disabled="projectRuleMode && !ruleForm.id && projectLocationInfo?.require_gps !== null && projectLocationInfo?.require_gps !== undefined">GPS 定位</el-checkbox><el-checkbox value="WiFi">打卡 Wi-Fi</el-checkbox></el-checkbox-group></el-form-item>
           <el-form-item>
             <template #label>
               <span class="field-label-with-tip">打卡位置<el-icon class="field-info-icon"><QuestionFilled /></el-icon></span>
@@ -2775,6 +2779,8 @@ const projectPendingDirectory = ref<any[]>([])
 const projectAssignmentDirectory = ref<any[]>([])
 const projectDirectoryLoading = ref(false)
 const projectDirectoryError = ref('')
+const projectLocationInfo = ref<any>(null)
+const projectLocationPending = ref(false)
 const selectedProject = computed(() => projectDirectory.value.find(project => Number(project.id) === projectRuleId.value))
 const projectPendingMembers = computed(() => projectPendingDirectory.value.filter(member => Number(member.project_id) === projectRuleId.value))
 const projectPreRuleReady = computed(() => !!selectedProject.value?.pre_rule_schedule_ready)
@@ -4259,7 +4265,7 @@ const defaultRuleExtra = () => ({
   overtime_rounding_rule: '时长按照「四舍五入」计算，保留至1位小数',
   overtime_unit_convert: '1天 = 8小时',
   holiday_plan: '公司节假日表',
-  locations: [] as Array<{ name: string, radius: number, latitude?: number, longitude?: number }>,
+  locations: [] as Array<{ name: string, radius: number, latitude?: number, longitude?: number, source?: string, project_code?: string, address?: string }>,
   wifi_list: [] as Array<{ name: string, bssid?: string }>,
 })
 const defaultRuleForm = () => ({
@@ -4296,7 +4302,6 @@ function normalizeRule(row: any) {
   if (row.require_gps) methods.add('GPS')
   if (row.require_wifi) methods.add('WiFi')
   if ('photo_each_punch' in (row.extra_config || {}) ? extra.photo_each_punch : row.require_photo) methods.add('拍照')
-  if (!methods.size) methods.add('GPS')
   extra.scope_mode = extra.scope_mode || (extra.scope_type === 'all' ? 'all' : 'custom')
   extra.assigned_employee_ids = Array.isArray(extra.assigned_employee_ids) ? extra.assigned_employee_ids : []
   extra.scope_custom_types = Array.isArray(extra.scope_custom_types) ? extra.scope_custom_types : []
@@ -4403,6 +4408,7 @@ function normalizeRule(row: any) {
       const lat = Number(loc?.latitude)
       const lng = Number(loc?.longitude)
       return {
+        ...loc,
         name: loc?.name || '',
         radius: Number(loc?.radius || 300),
         latitude: Number.isFinite(lat) ? lat : undefined,
@@ -5839,8 +5845,10 @@ async function fetchRules() {
   finally { ruleLoading.value = false }
 }
 
-function openRuleDialog(row?: any) {
+async function openRuleDialog(row?: any) {
   if (projectRuleMode.value && (!canEditProjectRule.value || (!row && (!projectRuleMissing.value || !projectPreRuleReady.value)))) return
+  projectLocationInfo.value = null
+  projectLocationPending.value = false
   if (row) {
     ruleForm.value = normalizeRule(row)
     if (projectRuleMode.value) ruleForm.value.extra.scope_mode = 'project'
@@ -5850,6 +5858,22 @@ function openRuleDialog(row?: any) {
     if (projectRuleMode.value) {
       changeRuleType('rotation')
       ruleForm.value.name = `${selectedProject.value?.name || '项目'}现场轮休规则`
+    }
+  }
+  if (projectRuleMode.value) {
+    try {
+      const defaults = await get(`/attendance/projects/${projectRuleId.value}/rule-defaults`,undefined,{skipDefaultErrorHandler:true})
+      projectLocationInfo.value = defaults
+      if (row && defaults.require_gps !== null && defaults.require_gps !== undefined) {
+        projectLocationPending.value = Boolean(row.require_gps) !== defaults.require_gps
+      }
+      if (!row) {
+        if (defaults.require_gps === true && !ruleForm.value.check_methods.includes('GPS')) ruleForm.value.check_methods.push('GPS')
+        if (defaults.require_gps === false) ruleForm.value.check_methods = ruleForm.value.check_methods.filter((method:string)=>method!=='GPS')
+        if (defaults.location) ruleForm.value.extra.locations = [{...defaults.location,radius:Number(defaults.location.radius || 300)}]
+      }
+    } catch {
+      ElMessage.warning('项目地点读取失败；保存规则前请核对定位要求和打卡范围')
     }
   }
   assigneePickerVisible.value = false
@@ -6005,8 +6029,8 @@ function buildRulePayload() {
     overtime_weekday_rate: Number(ruleForm.value.overtime_weekday_rate || 1.5),
     overtime_weekend_rate: Number(ruleForm.value.overtime_weekend_rate || 2),
     overtime_holiday_rate: Number(ruleForm.value.overtime_holiday_rate || 3),
-    require_gps: ruleForm.value.check_methods.includes('GPS') && gpsLat !== null && gpsLng !== null,
-    require_wifi: ruleForm.value.check_methods.includes('WiFi') && !!primaryWifi?.name,
+    require_gps: ruleForm.value.check_methods.includes('GPS'),
+    require_wifi: ruleForm.value.check_methods.includes('WiFi'),
     require_photo: requirePhoto,
     gps_latitude: gpsLat,
     gps_longitude: gpsLng,
@@ -6062,6 +6086,17 @@ async function submitRule() {
     return
   }
   const punchChoiceMode = extra.punch_choice_mode || 'mobile'
+  if (ruleForm.value.check_methods.includes('GPS') && !(extra.locations || []).some((loc:any)=>{
+    const lat=Number(loc?.latitude),lng=Number(loc?.longitude),radius=Number(loc?.radius)
+    return Number.isFinite(lat) && lat>=-90 && lat<=90 && Number.isFinite(lng) && lng>=-180 && lng<=180 && Number.isFinite(radius) && radius>0
+  })) {
+    ElMessage.warning('已要求 GPS 定位，请先设置带有效坐标和半径的打卡位置')
+    return
+  }
+  if (ruleForm.value.check_methods.includes('WiFi') && !(extra.wifi_list || []).some((wifi:any)=>String(wifi?.name || '').trim())) {
+    ElMessage.warning('已要求打卡 Wi-Fi，请先配置 Wi-Fi')
+    return
+  }
   if (['mobile', 'both'].includes(punchChoiceMode)) {
     const hasLocation = Array.isArray(extra.locations) && extra.locations.length > 0
     const hasWifi = Array.isArray(extra.wifi_list) && extra.wifi_list.length > 0

@@ -20,6 +20,11 @@ class ProjectInput(BaseModel):
     is_active: bool = True
 
 
+class CatalogProjectPromoteInput(BaseModel):
+    customer_id: int = Field(gt=0)
+    manager_id: int = Field(gt=0)
+
+
 class TegeneProjectInput(BaseModel):
     manager_id: int = Field(gt=0)
 
