@@ -1,0 +1,121 @@
+import { chromium, expect } from '@playwright/test'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+process.chdir(fileURLToPath(new URL('.', import.meta.url)))
+const adminPassword=process.env.TEST_ADMIN_PASSWORD
+if(!adminPassword) throw Error('Provide TEST_ADMIN_PASSWORD locally')
+const browser=await chromium.launch({headless:true,channel:'chrome'})
+const result={checks:[],errors:[],wecom:'UI preview only; real provider not configured'}
+const page=await browser.newPage({viewport:{width:1440,height:1000}})
+page.on('pageerror',e=>result.errors.push(e.message))
+async function check(name,fn){await fn();result.checks.push(name);console.log('PASS',name)}
+try{
+ await check('configured administrator can log into original management UI',async()=>{
+  await page.goto('http://127.0.0.1:5186/login')
+  await page.getByPlaceholder('请输入账号或手机号').fill('admin')
+  await page.getByPlaceholder('请输入密码',{exact:true}).fill(adminPassword)
+  await page.getByRole('button',{name:/登\s*录/,exact:true}).click()
+  await page.waitForURL('**/dashboard')
+ })
+ await check('personnel records show two authorized leads and disabled demos',async()=>{
+  await page.goto('http://127.0.0.1:5186/employees');await page.waitForLoadState('networkidle')
+  await page.getByRole('radio',{name:'管理员账号',exact:true}).check()
+  const list=page.locator('.people-list');await expect(list.getByText('售后负责人1',{exact:true})).toBeVisible();await expect(list.getByText('售后负责人2',{exact:true})).toBeVisible()
+  await expect(list.getByText('系统管理员',{exact:true})).toBeVisible()
+ })
+ await check('compact list paginates and searching returns to the first page',async()=>{
+  const total=Number(await page.locator('.status-filters button span').first().innerText())
+  await expect(page.locator('.people-list tbody tr')).toHaveCount(Math.min(total,20))
+  if(total>20){await page.locator('.el-pagination .btn-next').click();await expect(page.locator('.el-pager .is-active')).toHaveText('2')}
+  await page.getByRole('textbox',{name:'搜索人员'}).fill('售后负责人1')
+  await expect(page.locator('.people-list tbody tr')).toHaveCount(1)
+  await expect(page.locator('.el-pager .is-active')).toHaveText('1')
+  await page.getByRole('textbox',{name:'搜索人员'}).fill('')
+ })
+ await check('employment status has a centered column and editor has no helper copy or department picker',async()=>{
+  await expect(page.getByRole('columnheader',{name:'公司在职状态',exact:true})).toBeVisible()
+  for(const header of await page.getByRole('columnheader').all())await expect(header).toHaveCSS('text-align','center')
+  const departed=await page.locator('.people-list tbody tr').evaluateAll(rows=>rows.map(row=>row.classList.contains('departed')))
+  const firstDeparted=departed.indexOf(true)
+  if(firstDeparted>=0){
+   if(departed.slice(firstDeparted).some(value=>!value))throw Error('Departed personnel must follow active personnel')
+   await expect(page.locator('.people-list .employment-status.left').first()).toHaveCSS('color','rgb(192, 57, 54)')
+  }
+  await page.getByRole('button',{name:'手工录入',exact:true}).click()
+  await expect(page.locator('.account-notice')).toHaveCount(0)
+  await expect(page.getByLabel('系统组织部门',{exact:true})).toHaveCount(0)
+  await expect(page.getByLabel('所属部门',{exact:true})).toHaveCount(0)
+  await expect(page.locator('.person-form input[placeholder]:not([placeholder=""])')).toHaveCount(0)
+  await page.getByRole('button',{name:'取消',exact:true}).click()
+ })
+ await check('names have no avatars and every roster field supports combined filtering',async()=>{
+  await expect(page.locator('.people-list .person-avatar')).toHaveCount(0)
+  await expect(page.locator('.people-list td:first-child p')).toHaveCount(0)
+  await page.getByRole('button',{name:'筛选',exact:true}).click()
+  await expect(page.locator('.column-filters .el-form-item')).toHaveCount(21)
+  await page.getByRole('combobox',{name:'筛选姓名',exact:true}).click()
+  await page.getByRole('option',{name:'售后负责人1',exact:true}).click()
+  await page.getByRole('combobox',{name:'筛选姓名',exact:true}).press('Escape')
+  await page.getByRole('button',{name:'筛选 (1)',exact:true}).click()
+  await page.getByRole('combobox',{name:'筛选账号状态',exact:true}).click()
+  await page.getByRole('option',{name:'已开通',exact:true}).click()
+  await page.getByRole('combobox',{name:'筛选账号状态',exact:true}).press('Escape')
+  await expect(page.locator('.people-list tbody tr')).toHaveCount(1)
+  await expect(page.locator('.people-list tbody')).toContainText('售后负责人1')
+  await page.getByRole('button',{name:'筛选 (2)',exact:true}).click()
+  await page.getByRole('button',{name:'重置',exact:true}).click()
+  await expect(page.locator('.people-list tbody tr')).toHaveCount(Math.min(Number(await page.locator('.status-filters button span').first().innerText()),20))
+  await page.getByRole('button',{name:'筛选',exact:true}).click()
+ })
+ await check('roster preview displays valid rows and name/phone conflicts without importing',async()=>{
+  await page.getByRole('button',{name:'批量导入',exact:true}).click()
+  await page.getByLabel('选择花名册文件').setInputFiles({name:'验收花名册.csv',mimeType:'text/csv',buffer:Buffer.from('姓名,手机号,岗位\n导入验收样例,13800000881,售后工程师\n错误样例,abc,\n')})
+  await page.getByRole('button',{name:'生成预览',exact:true}).click()
+  await expect(page.getByText('可导入 1 人，1 行需处理',{exact:true})).toBeVisible()
+  await expect(page.getByRole('button',{name:'确认导入 1 人'})).toBeEnabled()
+  await page.screenshot({path:'../evidence/screenshots/roster-import-preview.png',fullPage:true})
+  await page.getByRole('button',{name:'取消',exact:true}).click()
+  await expect(page.locator('.people-list')).not.toContainText('13800000881')
+ })
+ await check('original attendance and approvals pages remain available',async()=>{
+  await page.goto('http://127.0.0.1:5186/attendance');await page.waitForLoadState('networkidle')
+  for(const tab of ['打卡记录','打卡时间记录','考勤规则','考勤审批','汇总报表'])await expect(page.getByRole('tab',{name:tab,exact:true})).toBeVisible()
+  await page.goto('http://127.0.0.1:5186/approval');await page.waitForLoadState('networkidle')
+  await expect(page.locator('.layout-content')).toContainText('审批')
+ })
+ const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true})
+ const mobile=await context.newPage();mobile.on('pageerror',e=>result.errors.push(e.message))
+ await check('mobile workbench attendance deep link survives local authentication',async()=>{
+  await mobile.goto('http://127.0.0.1:5187/mobile/app/attendance')
+  await mobile.getByPlaceholder('请输入账号或手机号').fill('admin')
+  await mobile.getByPlaceholder('请输入密码',{exact:true}).fill(adminPassword)
+  await mobile.getByRole('button',{name:'登录移动端',exact:true}).click()
+  await mobile.waitForURL('**/app/attendance');await mobile.waitForLoadState('networkidle')
+  await expect(mobile.getByRole('button',{name:'上下班打卡',exact:true})).toBeVisible()
+  await expect(mobile.getByRole('button',{name:'外出打卡',exact:true}).first()).toBeVisible()
+ })
+ await check('mobile original workbench exposes attendance and approval entries',async()=>{
+  await mobile.goto('http://127.0.0.1:5187/mobile/app/tabs/workbench');await mobile.waitForLoadState('networkidle')
+  await expect(mobile.locator('.workbench-app').filter({hasText:'打卡'})).toBeVisible()
+  await expect(mobile.locator('.workbench-app').filter({hasText:'审批'}).first()).toBeVisible()
+  await mobile.screenshot({path:'../evidence/screenshots/mobile-admin-workbench.png',fullPage:true})
+ })
+ const preview=await browser.newContext({viewport:{width:1440,height:1000}})
+ await preview.route('**/api/v1/auth/policy',route=>route.fulfill({json:{mode:'wecom_only',password_enabled:false,wecom_enabled:true,configuration_ready:true}}))
+ const webOnly=await preview.newPage()
+ await check('WeCom-only management UI has no password entry (policy preview)',async()=>{
+  await webOnly.goto('http://127.0.0.1:5186/login')
+  await expect(webOnly.getByRole('button',{name:'企业微信登录',exact:true})).toBeVisible()
+  await expect(webOnly.locator('input[type=password]')).toHaveCount(0)
+  await expect(webOnly.locator('.login-form-header')).toHaveCSS('opacity','1')
+  await webOnly.screenshot({path:'../evidence/screenshots/wecom-web-policy-preview.png',fullPage:true})
+ })
+ await check('WeCom-only mobile UI has no password entry (policy preview)',async()=>{
+  await webOnly.setViewportSize({width:390,height:844})
+  await webOnly.goto('http://127.0.0.1:5187/mobile/login')
+  await expect(webOnly.getByRole('button',{name:'企业微信登录',exact:true})).toBeVisible()
+  await expect(webOnly.locator('input[type=password]')).toHaveCount(0)
+  await webOnly.screenshot({path:'../evidence/screenshots/wecom-mobile-policy-preview.png',fullPage:true})
+ })
+}catch(e){result.errors.push(String(e));console.error(e.message)}finally{fs.writeFileSync('../evidence/auth-roster-browser.json',JSON.stringify(result,null,2));await browser.close()}
+if(result.errors.length) process.exitCode=1
