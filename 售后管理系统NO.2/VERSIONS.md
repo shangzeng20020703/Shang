@@ -6,7 +6,8 @@ NO.2 从私有仓库提交 `2c7a2e0ff5e128417311b1443e05e5e69a488b30` 独立起�
 
 | 版本 | 私有提交 | 校验清单 | 说明 |
 |---|---|---|---|
-| [no2-20261110-172414-CST-b3a1563](versions/no2-20261110-172414-CST-b3a1563/) | `b3a1563374668bebb32c70bf66510ad619922625` | [JSON](versions/manifests/no2-20261110-172414-CST-b3a1563.json) | 当前；员工月度考勤摘要显示满勤和余额，异常提醒定位到日期 |
+| [no2-20261110-173304-CST-525a7d0](versions/no2-20261110-173304-CST-525a7d0/) | `525a7d0eccd837afafad3b7b9db8c81a2746354c` | [JSON](versions/manifests/no2-20261110-173304-CST-525a7d0.json) | 当前；经理每日考勤按出勤、休假、缺卡缺勤与缺工时分组对齐 |
+| [no2-20261110-172414-CST-b3a1563](versions/no2-20261110-172414-CST-b3a1563/) | `b3a1563374668bebb32c70bf66510ad619922625` | [JSON](versions/manifests/no2-20261110-172414-CST-b3a1563.json) | 历史版本；员工月度考勤摘要显示满勤和余额，异常提醒定位到日期 |
 | [no2-20261110-170811-CST-421cb56](versions/no2-20261110-170811-CST-421cb56/) | `421cb56cfbda161759dd8037ef000d292c92bf3a` | [JSON](versions/manifests/no2-20261110-170811-CST-421cb56.json) | 历史版本；员工历史打卡默认收起，休假登记移入打卡选择 |
 | [no2-20261110-165954-CST-041e108](versions/no2-20261110-165954-CST-041e108/) | `041e108adb1952fbcb021dcf4db41526f5de9ba2` | [JSON](versions/manifests/no2-20261110-165954-CST-041e108.json) | 历史版本；员工缺卡单张或整班补录，售后经理审批后重算工时、缺卡与攒假进度 |
 | [no2-20261110-161610-CST-8b24a84](versions/no2-20261110-161610-CST-8b24a84/) | `8b24a8477473e20ad202c9c56273bd26b0209c13` | [JSON](versions/manifests/no2-20261110-161610-CST-8b24a84.json) | 历史版本；电脑与手机统一经理待办、提醒和原页审批 |

@@ -32,26 +32,26 @@
           </select></label
         >
       </div>
-      <table>
+      <table class="daily-table" aria-label="每日考勤与本月统计">
         <thead>
           <tr>
             <th>员工</th>
             <th>当日状态</th>
             <th>班次 / 实际工时</th>
             <th>项目 / 上下班卡</th>
-            <th>本月打卡 / 满勤</th>
-            <th>已休 / 休假余额</th>
-            <th>缺卡 / 缺勤</th>
+            <th>本月出勤</th>
+            <th>休假额度</th>
+            <th>缺卡与缺勤</th>
             <th>本月缺工时</th>
-            <th></th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="r in visibleRows" :key="r.employee_id">
-            <td>
+            <td class="person">
               {{ r.name }}<small>{{ r.employee_no }}</small>
             </td>
-            <td>
+            <td class="day-status">
               <span class="pill" :class="r.day.status">{{
                 labels[r.day.status]
               }}</span
@@ -81,13 +81,15 @@
                 ></small
               >
             </td>
-            <td>
+            <td class="shift-data">
+              <span class="compact-title">班次 / 实际工时</span>
               {{ shiftLabel(r.day.shift)
               }}<small v-if="r.day.shift">{{
                 duration(Math.floor(r.day.worked_seconds / 60))
               }}</small>
             </td>
-            <td :class="{ projectGreen: !!r.day.project }">
+            <td class="project-data" :class="{ projectGreen: !!r.day.project }">
+              <span class="compact-title">项目 / 上下班卡</span>
               {{
                 r.day.project?.name ||
                 r.day.projects.map((p: any) => p.name).join(' / ') ||
@@ -102,32 +104,16 @@
                   .join(' · ')
               }}</small>
             </td>
-            <td>
-              {{ r.punch_count }} 次<small>审批补卡 {{ r.corrected_count }} 次</small><small>满勤 {{ r.full_days }} 天</small>
+            <td class="metric" v-for="group in monthGroups(r)" :key="group.title">
+              <span class="compact-title">{{ group.title }}</span>
+              <dl>
+                <div v-for="stat in group.stats" :key="stat.label">
+                  <dt>{{ stat.label }}</dt>
+                  <dd :class="stat.tone">{{ stat.value }}</dd>
+                </div>
+              </dl>
             </td>
-            <td>
-              已休 {{ r.leave_days }} 天<small v-if="r.earned_rest"
-                >余额 {{ r.rest_balance }} 天 · 进度
-                {{ r.work_progress }}/6</small
-              >
-            </td>
-            <td>
-              缺卡 {{ r.missing_punches }} 次<small
-                >缺勤 {{ r.absence_days }} 天</small
-              >
-            </td>
-            <td>
-              已确认 {{ duration(r.shortage_minutes)
-              }}<small>{{ r.shortage_days }} 天</small>
-              <small v-if="r.pending_hours_days"
-                >待审 {{ r.pending_hours_days }} 天 · 可核算
-                {{ duration(r.pending_estimate_minutes)
-                }}<template v-if="r.pending_unknown_days">
-                  · {{ r.pending_unknown_days }} 天待核定</template
-                ></small
-              >
-            </td>
-            <td>
+            <td class="row-actions">
               <button
                 v-if="r.day.hours_status === 'pending_hours'"
                 @click="openReview(r, r.day)"
@@ -594,6 +580,29 @@ const saveRule = () =>
       cutoff: 0,
     }),
   )
+function monthGroups(r: (typeof rows.value)[number]) {
+  const metric = (label: string, value: string, tone = '') => ({ label, value, tone })
+  const leave = [metric('已休', r.leave_days + ' 天')]
+  if (r.earned_rest) leave.push(
+    metric('余额', r.rest_balance + ' 天', r.rest_balance < 0 ? 'negative' : ''),
+    metric('攒假进度', r.work_progress + '/6 天'),
+  )
+  const hours = [
+    metric('已确认', duration(r.shortage_minutes), r.shortage_minutes ? 'attention' : ''),
+    metric('涉及天数', r.shortage_days + ' 天'),
+  ]
+  if (r.pending_hours_days) {
+    hours.push(metric('待审批', r.pending_hours_days + ' 天', 'attention'),
+      metric('可核算差额', r.pending_hours_days === r.pending_unknown_days ? '待核定' : duration(r.pending_estimate_minutes)))
+    if (r.pending_unknown_days) hours.push(metric('待核定', r.pending_unknown_days + ' 天'))
+  }
+  return [
+    {title: '本月出勤', stats: [metric('实际打卡', r.punch_count + ' 次'), metric('审批补卡', r.corrected_count + ' 次'), metric('满勤', r.full_days + ' 天')]},
+    {title: '休假额度', stats: leave},
+    {title: '缺卡与缺勤', stats: [metric('缺卡', r.missing_punches + ' 次', r.missing_punches ? 'attention' : ''), metric('缺勤', r.absence_days + ' 天', r.absence_days ? 'negative' : '')]},
+    {title: '本月缺工时', stats: hours},
+  ]
+}
 const savePlace = () =>
   write(async () => {
     await put(
@@ -616,6 +625,7 @@ onMounted(async () => {
 </script>
 <style scoped>
 .monthly {
+  container-type: inline-size;
   background: #fff;
   padding: 24px;
   border-radius: 12px;
@@ -722,5 +732,44 @@ dialog {
 }
 p[role='alert'] {
   color: #a22727;
+}
+.daily-table { font-size: 14px; }
+.daily-table th { color: #465b6c; font-size: 13px; background: #f3f6f8; }
+.daily-table td { vertical-align: top; }
+.person { font-weight: 650; }
+.person small { font-weight: 400; }
+.compact-title { display: none; }
+.metric dl { margin: 0; display: grid; gap: 4px; }
+.metric dl div { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.metric dt { color: #536674; font-size: 12px; white-space: nowrap; }
+.metric dd { margin: 0; color: #23384a; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.metric dd.negative { color: #a12c36; }
+.metric dd.attention { color: #935515; }
+.row-actions button { white-space: nowrap; }
+@container (max-width: 1100px) {
+  .daily-table, .daily-table tbody { display: block; }
+  .daily-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .daily-table tbody { display: grid; gap: 12px; }
+  .daily-table tr { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 0 14px; padding: 12px 14px; border: 1px solid #dbe4e8; border-radius: 8px; }
+  .daily-table td { border: 0; padding: 0; min-width: 0; }
+  .daily-table .person { grid-column: 1; grid-row: 1; align-self: center; }
+  .person small { display: inline; margin-left: 6px; }
+  .daily-table .day-status { grid-column: 2 / 4; grid-row: 1; }
+  .daily-table .row-actions { grid-column: 4; grid-row: 1; text-align: right; }
+  .shift-data { grid-column: 1; }
+  .project-data { grid-column: 2 / -1; }
+  .daily-table .shift-data,.daily-table .project-data { margin: 8px 0; font-size: 13px; }
+  .compact-title { display: block; font-size: 12px; font-weight: 600; color: #42596a; }
+  .shift-data .compact-title,.project-data .compact-title { display: inline; margin-right: 6px; color: #607482; font-weight: 400; }
+  .daily-table .metric { border-top: 1px solid #e0e7ec; padding-top: 8px; }
+  .metric .compact-title { margin-bottom: 5px; }
+  .metric + .metric { padding-left: 10px; border-left: 1px solid #edf1f4; }
+}
+@container (max-width: 610px) {
+  .daily-table tr { grid-template-columns: repeat(2,minmax(0,1fr)); row-gap: 8px; }
+  .daily-table .day-status { grid-column: 2; grid-row: 1; }
+  .daily-table .row-actions { grid-column: 1 / -1; grid-row: auto; }
+  .daily-table .shift-data,.daily-table .project-data { grid-column: 1 / -1; margin: 0; }
+  .metric + .metric { padding-left: 0; border-left: 0; }
 }
 </style>
