@@ -34,10 +34,33 @@ class MonthlyPunch(Base):
     sequence: Mapped[int]
     request_key: Mapped[str] = mapped_column(String(36))
     kind: Mapped[str] = mapped_column(String(4))
-    latitude: Mapped[float]
-    longitude: Mapped[float]
+    latitude: Mapped[float | None]
+    longitude: Mapped[float | None]
     matches: Mapped[list] = mapped_column(JSON)
     photo: Mapped[str] = mapped_column(String(500), default="")
+
+    @property
+    def corrected(self):
+        # Live punches have UUID request keys; this namespace belongs to approvals.
+        return self.request_key.startswith("correction:")
+
+
+class MonthlyCorrection(Base):
+    __tablename__ = "field_monthly_corrections"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    shift: Mapped[str] = mapped_column(String(5))
+    check_in: Mapped[datetime | None] = mapped_column(DateTime)
+    check_out: Mapped[datetime | None] = mapped_column(DateTime)
+    projects: Mapped[list] = mapped_column(JSON)
+    original: Mapped[list] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(12), index=True)
+    created: Mapped[datetime] = mapped_column(DateTime)
+    manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    reviewed: Mapped[datetime | None] = mapped_column(DateTime)
+    note: Mapped[str] = mapped_column(String(500), default="")
 
 
 class ProjectConfirmation(Base):

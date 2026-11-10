@@ -431,6 +431,154 @@ async def main():
             t["kind"] == "hours" and t["day"] == "2030-05-04" and t["suggested"] is None
             for t in await inbox()
         )
+
+        # Real entry points: a correction is reviewed once, affects the owning
+        # month and keeps GPS counts and the earlier hours decision intact.
+        clock = datetime(2030, 6, 10, 8)
+        original = await hit("in", 40, shift="day")
+        clock = datetime(2030, 6, 11, 9)
+        begin = "/monthly/me/corrections"
+
+        def payload(day, start=None, end=None, shift="day"):
+            return dict(
+                day=day,
+                check_in=start,
+                check_out=end,
+                shift=shift,
+                project_code="B",
+                reason="核对现场签到表",
+            )
+
+        def decision(ident):
+            return f"/monthly/corrections/{ident}/review"
+
+        one = payload("2030-06-10", end="2030-06-10T20:00")
+        await req(
+            "POST",
+            "/monthly/hours/review",
+            json=dict(
+                punch_id=original["id"],
+                outcome="shortage",
+                missing_minutes=120,
+                reason="仅有上班卡",
+            ),
+        )
+        before = await own("2030-06-01")
+        item = await req("POST", begin, "001", json=one)
+        url = decision(item["id"])
+        assert any(
+            t["kind"] == "correction" and t["id"] == item["id"] for t in await inbox()
+        )
+        await req("POST", begin, "001", 409, json=one)
+        await req("POST", url, "001", 403, json={"approved": True})
+        await req("POST", url, json={"approved": True})
+        await req("POST", url, expected=409, json={"approved": True})
+        accepted = await own("2030-06-01")
+        d = next(d for d in accepted["days"] if d["day"] == one["day"])
+        assert d["hours_status"] == "full" and d["worked_seconds"] == 12 * 3600
+        assert [p["corrected"] for p in d["punches"]] == [False, True]
+        assert d["prior_hours_reviews"][0]["missing_minutes"] == 120
+        assert accepted["missing_punches"] == before["missing_punches"] - 1
+        assert (
+            accepted["punch_count"] == before["punch_count"]
+            and accepted["corrected_count"] == 1
+        )
+        assert accepted["work_progress"] == (before["work_progress"] + 1) % 6
+        assert not any(
+            t["kind"] == "correction" and t["id"] == item["id"] for t in await inbox()
+        )
+
+        night = payload("2030-05-31", "2030-05-31T20:00", "2030-06-01T06:00", "night")
+        old_may = await own("2030-05-01")
+        item = await req("POST", begin, "001", json=night)
+        await req(
+            "POST", decision(item["id"]), json={"approved": False, "note": "请核实项目"}
+        )
+        item = await req("POST", begin, "001", json=night)
+        await req("POST", decision(item["id"]), json={"approved": True})
+        may = await own("2030-05-01")
+        d = may["days"][-1]
+        assert [c["status"] for c in d["corrections"]] == ["rejected", "approved"]
+        assert (
+            d["shift"] == "night"
+            and d["hours_status"] == "pending_hours"
+            and d["suggested_minutes"] == 120
+        )
+        assert (
+            d["project"]["code"] == "B"
+            and d["missing_punches"] == 0
+            and d["corrected_count"] == 2
+        )
+        assert (
+            may["missing_punches"] == old_may["missing_punches"] - 2
+            and may["absence_days"] == old_may["absence_days"] - 1
+        )
+        assert (await own("2030-06-01"))["corrected_count"] == 1
+        await req(
+            "POST",
+            begin,
+            "001",
+            409,
+            json=payload("2030-06-01", "2030-06-01T05:00", "2030-06-01T17:00"),
+        )
+        await req(
+            "POST",
+            begin,
+            "001",
+            422,
+            json=payload("2030-05-12", "2030-05-12T08:00", "2030-05-12T20:00"),
+        )
+        boundary = await req(
+            "POST",
+            begin,
+            "001",
+            json=payload("2030-05-13", "2030-05-13T08:00", "2030-05-13T20:00"),
+        )
+        clock = datetime(2030, 6, 12, 9)
+        await req("POST", decision(boundary["id"]), json={"approved": True})
+
+        # A preserved checkout-only shift can be completed without rewriting
+        # that physical checkout or reusing its prior hours decision.
+        from app.models.monthly_field import MonthlyShift, MonthlyPunch
+
+        async with async_session() as db:
+            eid = ids["001"]
+            when = datetime(2030, 6, 11, 20)
+            db.add(
+                MonthlyShift(employee_id=eid, day=when.date(), kind="day", started=when)
+            )
+            db.add(
+                MonthlyPunch(
+                    employee_id=eid,
+                    day=when.date(),
+                    kind="out",
+                    at=when,
+                    sequence=1,
+                    request_key=str(uuid4()),
+                    latitude=40,
+                    longitude=116,
+                    matches=[dict(code="B", name="地点B")],
+                )
+            )
+            await db.commit()
+        item = await req(
+            "POST", begin, "001", json=payload("2030-06-11", start="2030-06-11T10:00")
+        )
+        await req("POST", decision(item["id"]), json={"approved": True})
+        result = await own("2030-06-01")
+        d = next(d for d in result["days"] if d["day"] == "2030-06-11")
+        assert d["missing_punches"] == 0 and d["suggested_minutes"] == 120
+        assert [p["corrected"] for p in d["punches"]] == [True, False]
+        await req(
+            "POST",
+            "/monthly/hours/review",
+            json=dict(
+                punch_id=d["revision"],
+                outcome="shortage",
+                missing_minutes=120,
+                reason="补卡后工时核对",
+            ),
+        )
     await engine.dispose()
     print(
         "NO.2 monthly attendance, permissions, GPS, overnight, approvals and settlement passed"

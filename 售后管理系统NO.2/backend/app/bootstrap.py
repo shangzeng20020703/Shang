@@ -171,6 +171,8 @@ async def initialize():
         if not any(col["name"] == "shifts" for col in columns):
             await connection.exec_driver_sql(
                 "ALTER TABLE field_monthly_policies ADD COLUMN shifts BOOLEAN NOT NULL DEFAULT FALSE")
+    from app.monthly_schema import allow_unlocated_corrections
+    await allow_unlocated_corrections(engine)
     await _migrate_project_nullable_columns()
     async with async_session() as db:
         from app.services.field_membership import migrate_assignments
@@ -193,7 +195,7 @@ async def initialize():
         if not await db.get(FieldSchemaVersion, 20):
             from app.services.manager_inbox import backfill
             await backfill(db)
-        for version in range(1, 21):
+        for version in range(1, 22):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

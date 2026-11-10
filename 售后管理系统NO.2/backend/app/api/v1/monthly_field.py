@@ -23,7 +23,8 @@ from app.models.monthly_field import (
 )
 from app.services import monthly_field as monthly
 from app.services import monthly_shifts as shifts
-from app.services import manager_inbox
+from app.services.monthly_corrections import CorrectionInput
+from app.services import monthly_corrections, manager_inbox
 from app.services import monthly_rest as earned_rest
 from app.services.attendance import AttendanceRecordService
 from app.services.field_roles import is_aftersales_person, role_names
@@ -296,7 +297,7 @@ async def review_hours(body: HoursDecision, user=Depends(manager), db=Depends(ge
             .with_for_update()
         )
     )
-    if not shift or logs[-1].id != target.id:
+    if not shift or max(p.id for p in logs) != target.id:
         raise HTTPException(409, "请刷新当日班次和打卡记录")
     existing = await db.get(MonthlyHoursReview, target.id, with_for_update=True)
     if (
@@ -583,3 +584,24 @@ async def history(
                 )
             )
     return sorted(rows, key=lambda r: r["day"], reverse=True)
+
+
+@router.get("/me/correction-projects")
+async def correction_projects(user=Depends(employee), db=Depends(get_db)):
+    return list((await monthly_corrections.project_choices(db)).values())
+
+
+@router.post("/me/corrections")
+async def apply_correction(
+    body: CorrectionInput, user=Depends(employee), db=Depends(get_db)
+):
+    return await monthly_corrections.apply(db, user.id, body)
+
+
+@router.post("/corrections/{ident}/review")
+async def decide_correction(
+    ident: int, body: Review, user=Depends(manager), db=Depends(get_db)
+):
+    return await monthly_corrections.review(
+        db, ident, user.id, body.approved, body.note
+    )

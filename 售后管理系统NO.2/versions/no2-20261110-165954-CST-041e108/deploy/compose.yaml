@@ -1,0 +1,103 @@
+name: aftersales
+
+x-runtime: &runtime
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  db:
+    <<: *runtime
+    image: mysql:8.4
+    cpus: 0.75
+    mem_limit: 768m
+    memswap_limit: 768m
+    pids_limit: 150
+    command: ["--innodb-buffer-pool-size=128M", "--max-connections=50", "--performance-schema=OFF", "--binlog-expire-logs-seconds=259200"]
+    networks: [database]
+    environment:
+      MYSQL_DATABASE: aftersales_attendance
+      MYSQL_USER: aftersales
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    volumes: ["mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  api:
+    <<: *runtime
+    image: aftersales-api:${RELEASE_TAG:-local}
+    build: ../backend
+    cpus: 0.75
+    mem_limit: 768m
+    memswap_limit: 768m
+    pids_limit: 100
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    networks: [application, database]
+    environment:
+      ENVIRONMENT: production
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["https://sh.tegene.com"]}
+      LOGIN_MODE: ${LOGIN_MODE:-password}
+      WECHAT_CORP_ID: ${WECHAT_CORP_ID:-}
+      WECHAT_AGENT_ID: ${WECHAT_AGENT_ID:-}
+      WECHAT_SECRET: ${WECHAT_SECRET:-}
+      WECHAT_WEB_REDIRECT_URI: ${WECHAT_WEB_REDIRECT_URI:-}
+      WECHAT_MOBILE_REDIRECT_URI: ${WECHAT_MOBILE_REDIRECT_URI:-}
+      SECRET_KEY: ${SECRET_KEY:?Set a random SECRET_KEY}
+      DATABASE_BACKEND: mysql
+      MYSQL_HOST: db
+      MYSQL_USER: aftersales
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DB: aftersales_attendance
+      TENCENT_MAP_WEB_SERVICE_KEY: ${TENCENT_MAP_WEB_SERVICE_KEY:-}
+      TENCENT_MAP_BROWSER_KEY: ${TENCENT_MAP_BROWSER_KEY:-}
+      TEGENE_API_BASE_URL: ${TEGENE_API_BASE_URL:-}
+      TEGENE_TOKEN_URL: ${TEGENE_TOKEN_URL:-}
+      TEGENE_CLIENT_ID: ${TEGENE_CLIENT_ID:-}
+      TEGENE_CLIENT_SECRET: ${TEGENE_CLIENT_SECRET:-}
+      TEGENE_RESOURCE: ${TEGENE_RESOURCE:-}
+      TEGENE_SCOPE: ${TEGENE_SCOPE:-}
+    volumes: ["upload-data:/app/uploads", "app-data:/app/data"]
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  web:
+    <<: *runtime
+    image: aftersales-web:${RELEASE_TAG:-local}
+    cpus: 0.25
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 50
+    read_only: true
+    tmpfs: ["/var/cache/nginx:size=32m", "/var/run:size=1m", "/tmp:size=16m"]
+    networks: [application, edge]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    ports: ["127.0.0.1:8180:80"]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+volumes:
+  mysql-data:
+  upload-data:
+  app-data:
+networks:
+  application:
+  database:
+    internal: true
+  edge:

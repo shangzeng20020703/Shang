@@ -103,7 +103,7 @@
               }}</small>
             </td>
             <td>
-              {{ r.punch_count }} 次<small>满勤 {{ r.full_days }} 天</small>
+              {{ r.punch_count }} 次<small>审批补卡 {{ r.corrected_count }} 次</small><small>满勤 {{ r.full_days }} 天</small>
             </td>
             <td>
               已休 {{ r.leave_days }} 天<small v-if="r.earned_rest"
@@ -182,7 +182,7 @@
             >缺勤时段 {{ fmt(d.start) }} 至 {{ fmt(d.end) }}</small
           >
           <small v-for="p in d.punches" :key="p.id"
-            >{{ p.kind === 'in' ? '上班' : '下班' }} {{ fmt(p.at) }} ·
+            >{{ p.corrected ? '审批补卡 · ' : '' }}{{ p.kind === 'in' ? '上班' : '下班' }} {{ fmt(p.at) }} ·
             {{ p.matches.map((m: any) => m.name).join(' / ') }}
             <a
               v-if="p.photo"
@@ -191,6 +191,8 @@
               >照片</a
             ></small
           >
+          <small v-for="c in d.corrections" :key="c.id">补卡{{ ({pending:'待审批',approved:'已批准',rejected:'已驳回'} as Record<string,string>)[c.status] }} · {{ c.reason }} {{ c.note }}</small>
+          <small v-for="h in d.prior_hours_reviews" :key="h.at">补卡前的工时审批 · {{ labels[h.outcome] }} · {{ h.reason }}</small>
           <div v-if="!d.project && d.projects.length > 1">
             确认当日唯一项目
             <button
@@ -211,7 +213,7 @@
         <input type="month" :value="date.slice(0, 7)" @change="changeMonth"
       /></label>
       <p v-if="!pendingHours.length">本月没有待审批工时。</p>
-      <article v-for="{ r, d } in pendingHours" :key="d.punches.at(-1).id">
+      <article v-for="{ r, d } in pendingHours" :key="d.revision">
         {{ r.name }} · {{ d.day }} · {{ shiftLabel(d.shift) }} · 实际
         {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
         {{ d.anomalies.join('、') }}
@@ -486,7 +488,7 @@ function openReview(r: any, d: any) {
 const submitHours = () =>
   write(async () => {
     await post('/monthly/hours/review', {
-      punch_id: reviewing.value.d.punches.at(-1).id,
+      punch_id: reviewing.value.d.revision,
       outcome: outcome.value,
       missing_minutes: outcome.value === 'shortage' ? missing.value : 0,
       reason: reviewReason.value,
@@ -583,7 +585,7 @@ const review = (r: any, approved: boolean) =>
     }),
   )
 const confirmDay = (d: any, code: string) =>
-  write(() => post('/monthly/confirm', { punch_id: d.punches.at(-1).id, code }))
+  write(() => post('/monthly/confirm', { punch_id: d.revision, code }))
 const saveRule = () =>
   write(() =>
     post('/monthly/policy', {

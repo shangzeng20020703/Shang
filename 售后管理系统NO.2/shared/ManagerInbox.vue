@@ -96,7 +96,7 @@
             >{{ t.kind === 'hours' ? '审批原因' : '审批意见'
             }}<input
               v-model.trim="note"
-              :required="t.kind === 'hours'"
+              :required="t.kind === 'hours' || (t.kind === 'correction' && choice === 'reject')"
               maxlength="500"
           /></label>
         </template>
@@ -141,6 +141,7 @@ const props = defineProps<{
 }>()
 const kinds = {
   rest: '额度休假与补休',
+  correction: '补卡申请',
   hours: '工时异常',
   project: '项目确认',
   leave: '独立请假',
@@ -207,6 +208,9 @@ async function submit(t: Task) {
     const approved = choice.value === 'approve'
     let result
     switch (t.kind) {
+      case 'correction':
+        result = await props.post('/monthly/corrections/' + t.id + '/review', {approved, note:note.value})
+        break
       case 'rest':
         result = await props.post('/monthly/requests/' + t.id + '/review', {
           approved,

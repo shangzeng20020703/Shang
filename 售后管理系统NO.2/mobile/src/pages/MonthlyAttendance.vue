@@ -18,7 +18,7 @@
             {{ shiftLabel(r.days.at(-1)?.shift) }} ·
             {{ r.days.at(-1)?.project?.name
             }}<small
-              >打卡 {{ r.punch_count }} 次 · 满勤 {{ r.full_days }} 天 · 已休
+              >实际打卡 {{ r.punch_count }} 次 · 审批补卡 {{ r.corrected_count }} 次 · 满勤 {{ r.full_days }} 天 · 已休
               {{ r.leave_days }} 天 · 缺卡 {{ r.missing_punches }} 次 · 缺勤
               {{ r.absence_days }} 天 · 已确认缺
               {{ duration(r.shortage_minutes) }}（{{
@@ -116,7 +116,7 @@
             >考勤月份 <input type="month" v-model="month" @change="refresh"
           /></label>
           <p>
-            打卡 {{ rows[0]?.punch_count || 0 }} 次 · 满勤
+            实际打卡 {{ rows[0]?.punch_count || 0 }} 次 · 审批补卡 {{ rows[0]?.corrected_count || 0 }} 次 · 满勤
             {{ rows[0]?.full_days || 0 }} 天 · 已休
             {{ rows[0]?.leave_days || 0 }} 天 · 缺卡
             {{ rows[0]?.missing_punches || 0 }} 次 · 缺勤
@@ -169,10 +169,12 @@
               >{{ d.start.replace('T', ' ') }} 至
               {{ d.end.replace('T', ' ') }}</small
             ><small v-for="p in d.punches" :key="p.id"
-              >{{ p.kind === 'in' ? '上班' : '下班' }}
+              >{{ p.corrected ? '审批补卡 · ' : '' }}{{ p.kind === 'in' ? '上班' : '下班' }}
               {{ p.at.slice(5, 19).replace('T', ' ') }} ·
               {{ p.matches.map((m: any) => m.name).join(' / ') }}</small
             >
+            <small v-for="h in d.prior_hours_reviews" :key="h.at">补卡前的工时审批 · {{ labels[h.outcome] }} · {{ h.reason }}</small>
+            <MonthlyCorrection :day="d" @submitted="refresh" />
           </details>
           <details>
             <summary>查询所选月份的旧版记录</summary>
@@ -221,7 +223,8 @@
   >
 </template>
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import MonthlyCorrection from './MonthlyCorrection.vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import gcoord from 'gcoord'
 import { IonPage, IonContent, onIonViewWillEnter } from '@ionic/vue'
 import { useRouter } from 'vue-router'
@@ -439,6 +442,8 @@ function logout() {
   router.replace('/login')
 }
 onIonViewWillEnter(refresh)
+onMounted(() => window.addEventListener("focus", refresh))
+onBeforeUnmount(() => window.removeEventListener("focus", refresh))
 </script>
 <style scoped>
 main {

@@ -12,6 +12,7 @@ from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
 from app.models.field_service import FieldProject, FieldProjectCatalog
 from app.models.monthly_field import (
+    MonthlyCorrection,
     MonthlyAbsence,
     MonthlyEligibility,
     MonthlyPolicy,
@@ -137,7 +138,7 @@ def day_result(
         latest = person_punches[-1]
         if len(hits) == 1:
             project = next(iter(hits.values()))
-        elif decision and decision.punch_id == latest.id:
+        elif decision and decision.punch_id == max(p.id for p in person_punches):
             project = hits.get(decision.code)
         status = "present" if project else "conflict"
         worked = sum(
@@ -171,19 +172,28 @@ def day_result(
         projects=list(hits.values()),
         confirmation=decision.code if decision else None,
         punches=[
-            dict(id=p.id, at=p.at, kind=p.kind, matches=p.matches, photo=p.photo)
+            dict(
+                id=p.id,
+                at=p.at,
+                kind=p.kind,
+                matches=p.matches,
+                photo=p.photo,
+                corrected=p.corrected,
+            )
             for p in person_punches
         ],
-        application=dict(
-            id=rest.id,
-            status=rest.status,
-            reason=rest.reason,
-            note=rest.note,
-            reviewed=rest.reviewed,
-            manager_id=rest.manager_id,
-        )
-        if rest
-        else None,
+        application=(
+            dict(
+                id=rest.id,
+                status=rest.status,
+                reason=rest.reason,
+                note=rest.note,
+                reviewed=rest.reviewed,
+                manager_id=rest.manager_id,
+            )
+            if rest
+            else None
+        ),
     )
 
 
@@ -269,6 +279,13 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
             model.employee_id.in_(ids), model.day.between(first, last)
         )
 
+    from app.services.monthly_corrections import missing_slots, record
+
+    corrections = defaultdict(list)
+    for req in await db.scalars(
+        scope(MonthlyCorrection).order_by(MonthlyCorrection.id)
+    ):
+        corrections[req.employee_id, req.day].append(record(req))
     spent = {
         (f.employee_id, f.day)
         for f in await db.scalars(
@@ -356,10 +373,11 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
             )
             key = (person.id, day)
             logs = punches[key]
+            revision = max((p.id for p in logs), default=None)
             row = day_result(
                 day,
                 logs,
-                confirmations.get(logs[-1].id) if logs else None,
+                confirmations.get(revision),
                 rests.get(key),
                 holidays.get(day),
                 key in trips,
@@ -376,7 +394,7 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
             ):
                 row["status"] = "leave"
             if shift := shifts.get(key):
-                row.update(evaluate(shift, logs, stamp, hours_reviews.get(logs[-1].id)))
+                row.update(evaluate(shift, logs, stamp, hours_reviews.get(revision)))
                 if row["project"] or row["hours_status"] in {
                     "pending_hours",
                     "shortage",
@@ -387,11 +405,42 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
                 row["status"] = "absent"
             if key in spent:
                 row["status"] = "quota_rest"
-            row["punch_count"] = len(logs)
+            row["revision"] = revision
+            row["corrections"] = corrections[key]
+            row["prior_hours_reviews"] = [
+                dict(
+                    reason=h.reason,
+                    outcome=h.outcome,
+                    missing_minutes=h.missing_minutes,
+                    at=h.at,
+                    manager_id=h.manager_id,
+                )
+                for p in logs
+                if p.id != revision and (h := hours_reviews.get(p.id))
+            ]
+            row["corrected_count"] = sum(p.corrected for p in logs)
+            row["punch_count"] = len(logs) - row["corrected_count"]
+            row["missing_slots"] = missing_slots(row, rule.shifts, stamp)
+            if (
+                leave_minutes[key] >= rule.minutes
+                or key in trips
+                or (rests.get(key) and rests[key].status == "approved")
+            ):
+                row["missing_slots"] = []
+            row["can_correct"] = bool(
+                row["missing_slots"]
+                and day >= stamp.date() - 29 * DAY
+                and not any(c["status"] == "pending" for c in corrections[key])
+            )
+
             row["missing_punches"] = (
                 2
                 if row["status"] == "absent"
-                else int(bool(logs and logs[-1].kind == "in" and stamp >= row["end"]))
+                else (
+                    int(logs[0].kind == "out") + int(logs[-1].kind == "in")
+                    if logs and stamp >= row["end"]
+                    else 0
+                )
             )
             used += row["status"] in {"rest", "quota_rest"}
             absent += row["status"] == "absent"
@@ -427,6 +476,7 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
                     rest_balance=balances.get(person.id, (0, 0))[0],
                     work_progress=balances.get(person.id, (0, 0))[1],
                     punch_count=sum(r["punch_count"] for r in days),
+                    corrected_count=sum(r["corrected_count"] for r in days),
                     missing_punches=sum(r["missing_punches"] for r in days),
                     leave_days=sum(
                         r["status"] in {"quota_rest", "rest", "approved_rest", "leave"}

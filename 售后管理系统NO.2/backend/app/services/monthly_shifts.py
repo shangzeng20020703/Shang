@@ -51,10 +51,14 @@ def evaluate(shift, punches, stamp, review):
         for checkin, checkout in zip(punches, punches[1:])
         if checkin.kind == "in" and checkout.kind == "out" and checkin.at < end
     )
-    missing_card = punches[-1].kind != "out"
+    missing_in = punches[0].kind == "out"
+    missing_out = punches[-1].kind == "in"
+    missing_card = missing_in or missing_out
     crosses_midnight = punches[-1].at.date() > shift.day
     reasons = []
-    if missing_card:
+    if missing_in:
+        reasons.append("缺上班卡")
+    if missing_out:
         reasons.append("缺下班卡")
     if worked < REQUIRED_MINUTES * 60:
         reasons.append("工时不足")

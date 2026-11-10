@@ -10,6 +10,7 @@ from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
 from app.models.leave import ApprovalStatus, LeaveRequest
 from app.models.monthly_field import (
+    MonthlyCorrection,
     MonthlyHoursReview,
     MonthlyPunch,
     MonthlyPunchTodo,
@@ -39,7 +40,7 @@ async def sync_punch(db, employee_id, day):
             .with_for_update()
         )
     )
-    latest = logs[-1]
+    latest = max(logs, key=lambda p: p.id)
     shift = await db.get(MonthlyShift, key)
     hours_due = project_due = None
     if shift and not await db.get(MonthlyHoursReview, latest.id, with_for_update=True):
@@ -57,7 +58,7 @@ async def sync_punch(db, employee_id, day):
         )
     )
     codes = set()
-    for p in logs:
+    for p in sorted(logs, key=lambda p: p.id):
         codes.update(m["code"] for m in p.matches)
         if p.id in confirmed:
             project_due = None
@@ -95,6 +96,9 @@ def item(kind, ident, name, number, since, **detail):
 
 async def inbox(db, manager_id, serialize_workflow, count_only=False):
     stamp = monthly_field.now()
+    pending_corrections = select(MonthlyCorrection).where(
+        MonthlyCorrection.status == "pending"
+    )
     pending_rest = select(MonthlyRest).where(MonthlyRest.status == "pending")
     # Independent leave records with workflow links follow the current workflow node.
     linked = (
@@ -125,6 +129,7 @@ async def inbox(db, manager_id, serialize_workflow, count_only=False):
     if count_only:
         total = flow_total
         for query in (
+            pending_corrections,
             pending_rest,
             standalone,
             select(MonthlyPunchTodo).where(hours),
@@ -134,6 +139,7 @@ async def inbox(db, manager_id, serialize_workflow, count_only=False):
         return dict(total=total)
 
     rows = []
+    corrections = list(await db.scalars(pending_corrections))
     pending = list(await db.scalars(pending_rest))
     start = await monthly_rest.effective(db)
     balances = await monthly_rest.totals(
@@ -141,13 +147,52 @@ async def inbox(db, manager_id, serialize_workflow, count_only=False):
     )
     leaves = list(await db.scalars(standalone))
     todos = list(await db.scalars(select(MonthlyPunchTodo).where(or_(hours, projects))))
-    ids = {r.employee_id for r in [*pending, *leaves, *todos]} | {
+    ids = {r.employee_id for r in [*corrections, *pending, *leaves, *todos]} | {
         f.applicant_id for f in flows
     }
     people = {
         e.id: (e.name, e.employee_no)
         for e in await db.scalars(select(Employee).where(Employee.id.in_(ids)))
     }
+    for c in corrections:
+        fields = [
+            dict(
+                label="原始打卡",
+                value="、".join(
+                    ("上班 " if p["kind"] == "in" else "下班 ")
+                    + p["at"].replace("T", " ")
+                    for p in c.original
+                )
+                or "全天无卡",
+            )
+        ]
+        for label, stamp_value in [
+            ("申请补上班卡", c.check_in),
+            ("申请补下班卡", c.check_out),
+        ]:
+            if stamp_value:
+                fields.append(
+                    dict(
+                        label=label,
+                        value=stamp_value.isoformat(" ", timespec="minutes"),
+                    )
+                )
+        rows.append(
+            item(
+                "correction",
+                c.id,
+                *people[c.employee_id],
+                c.created,
+                title="补卡申请",
+                day=c.day,
+                reason=c.reason,
+                fields=fields,
+                period=("夜班" if c.shift == "night" else "白班")
+                + " · "
+                + ("员工申报项目 " if not c.original else "打卡项目 ")
+                + " / ".join(p["name"] for p in c.projects),
+            )
+        )
     for r in pending:
         balance = balances.get(r.employee_id, (0, 0))[0]
         uses_balance = start and min(r.created.date(), r.day) >= start
@@ -234,9 +279,11 @@ async def inbox(db, manager_id, serialize_workflow, count_only=False):
                 reason=(leave.reason if leave else f.summary),
                 node=out.current_node_name or f"第 {f.current_node_order} 个节点",
                 day=leave.start_date if leave else None,
-                period=f"{leave.start_date} 至 {leave.end_date}（{leave.days} 天）"
-                if leave
-                else None,
+                period=(
+                    f"{leave.start_date} 至 {leave.end_date}（{leave.days} 天）"
+                    if leave
+                    else None
+                ),
                 order=f.current_node_order,
                 fields=fields,
             )
