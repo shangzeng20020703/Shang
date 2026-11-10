@@ -3,6 +3,7 @@ WORKDIR /build
 COPY frontend/package*.json ./frontend/
 COPY mobile/package*.json ./mobile/
 RUN npm ci --prefix frontend && npm ci --prefix mobile
+COPY shared ./shared
 COPY frontend ./frontend
 COPY mobile ./mobile
 RUN npm run build --prefix frontend && npm run build --prefix mobile

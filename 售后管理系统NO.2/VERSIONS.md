@@ -6,7 +6,8 @@ NO.2 从私有仓库提交 `2c7a2e0ff5e128417311b1443e05e5e69a488b30` 独立起�
 
 | 版本 | 私有提交 | 校验清单 | 说明 |
 |---|---|---|---|
-| [no2-20261110-152848-CST-0b7b67c](versions/no2-20261110-152848-CST-0b7b67c/) | `0b7b67c90010523705591970f01fc87fc6451e5e` | [JSON](versions/manifests/no2-20261110-152848-CST-0b7b67c.json) | 当前；满勤攒假跨月累计、休假审批、月报缺卡及缺工时明细 |
+| [no2-20261110-161610-CST-8b24a84](versions/no2-20261110-161610-CST-8b24a84/) | `8b24a8477473e20ad202c9c56273bd26b0209c13` | [JSON](versions/manifests/no2-20261110-161610-CST-8b24a84.json) | 当前；电脑与手机统一经理待办、提醒和原页审批 |
+| [no2-20261110-152848-CST-0b7b67c](versions/no2-20261110-152848-CST-0b7b67c/) | `0b7b67c90010523705591970f01fc87fc6451e5e` | [JSON](versions/manifests/no2-20261110-152848-CST-0b7b67c.json) | 历史版本；满勤攒假跨月累计、休假审批、月报缺卡及缺工时明细 |
 | [no2-20261110-142423-CST-993867c](versions/no2-20261110-142423-CST-993867c/) | `993867c80f68974a2ecd85e84757ed3750b67d65` | [JSON](versions/manifests/no2-20261110-142423-CST-993867c.json) | 历史版本；白班及跨夜打卡、每日12小时工时审批与月报 |
 | [no2-20261110-134652-CST-8c9b9b2](versions/no2-20261110-134652-CST-8c9b9b2/) | `8c9b9b21b81736ec66dbf401a40cda702714372f` | [JSON](versions/manifests/no2-20261110-134652-CST-8c9b9b2.json) | 历史版本；两类角色、月度四天休息与全项目地点打卡 |
 | [no2-20261110-121118-CST-d08f7d3](versions/no2-20261110-121118-CST-d08f7d3/) | `d08f7d3b3666e398ff5be20735d6c136f3cf8b8f` | [JSON](versions/manifests/no2-20261110-121118-CST-d08f7d3.json) | 历史版本；NO.2 初始版，仅调整版本说明；未部署服务器 |

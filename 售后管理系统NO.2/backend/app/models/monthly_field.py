@@ -118,3 +118,16 @@ class MonthlyRestFact(Base):
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     punch_id: Mapped[int | None] = mapped_column(ForeignKey("field_monthly_punches.id"))
     rest_id: Mapped[int | None] = mapped_column(ForeignKey("field_monthly_rest.id"))
+
+
+class MonthlyPunchTodo(Base):
+    """Only unresolved decisions; timestamps make cutoff-driven tasks visible on time."""
+
+    __tablename__ = "field_monthly_punch_todos"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    punch_id: Mapped[int] = mapped_column(ForeignKey("field_monthly_punches.id"))
+    hours_due: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    project_due: Mapped[datetime | None] = mapped_column(DateTime, index=True)

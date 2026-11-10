@@ -135,6 +135,11 @@ async def main() -> None:
                              json={"module": "leave", "business_type": "leave_request",
                                    "business_id": ids["first_leave"], "summary": "现场请假"})
         leave_instance_id = item["id"]
+        pending = await request("GET", "/monthly/manager-inbox", "manager")
+        assert {r["key"] for r in pending["items"]} == {f"flow:{leave_instance_id}",f"leave:{ids['direct_leave']}"}
+        await request("POST",f"/approval/instances/{leave_instance_id}/process","manager",expected=409,
+                      json={"action":"approve","expected_node_order":999})
+
         async with async_session() as db:
             instance = await db.get(ApprovalInstance, leave_instance_id)
             assert "aftersales_single_approval" in instance.flow_snapshot
@@ -146,6 +151,9 @@ async def main() -> None:
         decided = await request("POST", f"/approval/instances/{leave_instance_id}/process", "manager",
                                 json={"action": "approve", "comment": "同意"})
         assert decided["status"] == "approved"
+        await request("POST",f"/approval/instances/{leave_instance_id}/process","manager",expected=409,
+                      json={"action":"approve","expected_node_order":1})
+        assert (await request("GET","/monthly/manager-inbox?count_only=true","manager"))["total"]==1
         async with async_session() as db:
             leave = await db.get(LeaveRequest, ids["first_leave"])
             assert leave.approval_status == ApprovalStatus.approved and leave.approver_id == ids["manager"]

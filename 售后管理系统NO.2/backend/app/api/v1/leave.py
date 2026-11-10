@@ -116,6 +116,12 @@ async def _approve_leave_with_workflow(db: AsyncSession, request_id: int,
     if request is None:
         raise HTTPException(status_code=404, detail="请假申请不存在")
     await _require_leave_approver(db, user, request, note)
+    from sqlalchemy import update
+    claim = await db.execute(update(LeaveRequest).where(
+        LeaveRequest.id == request_id, LeaveRequest.approval_status == ApprovalStatus.pending
+    ).values(approval_status=LeaveRequest.approval_status))
+    if claim.rowcount != 1:
+        raise HTTPException(409, "该事项已处理")
     instance = await db.scalar(
         select(ApprovalInstance).where(
             ApprovalInstance.module == "leave",

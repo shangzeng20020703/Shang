@@ -23,6 +23,7 @@ from app.models.monthly_field import (
 )
 from app.services import monthly_field as monthly
 from app.services import monthly_shifts as shifts
+from app.services import manager_inbox
 from app.services import monthly_rest as earned_rest
 from app.services.attendance import AttendanceRecordService
 from app.services.field_roles import is_aftersales_person, role_names
@@ -273,6 +274,7 @@ async def punch(body: PunchInput, user=Depends(employee), db=Depends(get_db)):
     db.add(item)
     await db.flush()
     await earned_rest.sync_work(db, item, stamp)
+    await manager_inbox.sync_punch(db, user.id, day)
     return dict(id=item.id, day=day, matches=matches)
 
 
@@ -281,9 +283,7 @@ async def review_hours(body: HoursDecision, user=Depends(manager), db=Depends(ge
     target = await db.get(MonthlyPunch, body.punch_id)
     if not target:
         raise HTTPException(404, "打卡记录不存在")
-    await db.scalar(
-        select(Employee.id).where(Employee.id == target.employee_id).with_for_update()
-    )
+    await earned_rest.lock_employee(db, target.employee_id)
     shift = await db.get(MonthlyShift, (target.employee_id, target.day))
     logs = list(
         await db.scalars(
@@ -293,11 +293,12 @@ async def review_hours(body: HoursDecision, user=Depends(manager), db=Depends(ge
                 MonthlyPunch.day == target.day,
             )
             .order_by(MonthlyPunch.sequence)
+            .with_for_update()
         )
     )
     if not shift or logs[-1].id != target.id:
         raise HTTPException(409, "请刷新当日班次和打卡记录")
-    existing = await db.get(MonthlyHoursReview, target.id)
+    existing = await db.get(MonthlyHoursReview, target.id, with_for_update=True)
     if (
         existing
         or shifts.evaluate(shift, logs, monthly.now(), None)["hours_status"]
@@ -319,6 +320,7 @@ async def review_hours(body: HoursDecision, user=Depends(manager), db=Depends(ge
     db.add(decision)
     await db.flush()
     await earned_rest.sync_work(db, target, monthly.now(), decision)
+    await manager_inbox.sync_punch(db, target.employee_id, target.day)
     return {"outcome": body.outcome}
 
 
@@ -337,9 +339,7 @@ async def confirm(body: Resolution, user=Depends(manager), db=Depends(get_db)):
     target = await db.get(MonthlyPunch, body.punch_id)
     if not target:
         raise HTTPException(404, "打卡记录不存在")
-    await db.scalar(
-        select(Employee.id).where(Employee.id == target.employee_id).with_for_update()
-    )
+    await earned_rest.lock_employee(db, target.employee_id)
     logs = list(
         await db.scalars(
             select(MonthlyPunch)
@@ -348,13 +348,16 @@ async def confirm(body: Resolution, user=Depends(manager), db=Depends(get_db)):
                 MonthlyPunch.day == target.day,
             )
             .order_by(MonthlyPunch.id)
+            .with_for_update()
         )
     )
     codes = {p["code"] for log in logs for p in log.matches}
     if logs[-1].id != target.id or body.code not in codes or len(codes) < 2:
         raise HTTPException(409, "请刷新打卡明细并选择当日命中的项目")
     existing = await db.scalar(
-        select(ProjectConfirmation).where(ProjectConfirmation.punch_id == target.id)
+        select(ProjectConfirmation)
+        .where(ProjectConfirmation.punch_id == target.id)
+        .with_for_update()
     )
     if existing and existing.code != body.code:
         raise HTTPException(409, "此记录已确认")
@@ -364,7 +367,9 @@ async def confirm(body: Resolution, user=Depends(manager), db=Depends(get_db)):
                 punch_id=target.id, code=body.code, manager_id=user.id, at=monthly.now()
             )
         )
-    return {"code": body.code}
+    await db.flush()
+    await manager_inbox.sync_punch(db, target.employee_id, target.day)
+    return {"code": body.code, "already_processed": bool(existing)}
 
 
 async def rest_options(db, person, day, *, locking=False):
@@ -456,6 +461,15 @@ async def apply_rest(body: RestInput, user=Depends(employee), db=Depends(get_db)
     return {"id": row.id, "status": row.status}
 
 
+@router.get("/manager-inbox")
+async def pending_decisions(
+    count_only: bool = False, user=Depends(manager), db=Depends(get_db)
+):
+    from app.api.v1.approval import _approval_instance_out
+
+    return await manager_inbox.inbox(db, user.id, _approval_instance_out, count_only)
+
+
 @router.get("/requests")
 async def requests(user=Depends(manager), db=Depends(get_db)):
     rows = await db.execute(
@@ -477,6 +491,8 @@ async def review(item_id: int, body: Review, user=Depends(manager), db=Depends(g
     if not row:
         raise HTTPException(404, "申请不存在")
     await earned_rest.lock_employee(db, row.employee_id)
+    if row.status != "pending":
+        raise HTTPException(409, "该申请已处理")
     start = await earned_rest.effective(db)
     debit = body.approved and start and row.day >= start and row.created.date() >= start
     if debit:

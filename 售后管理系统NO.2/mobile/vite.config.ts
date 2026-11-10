@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath, URL } from 'node:url'
 import { resolve } from 'node:path'
 
 function mobileDevHttpsConfig() {
@@ -39,6 +40,7 @@ export default defineConfig({
     },
   ],
   resolve: {
+    dedupe: ['vue'],
     alias: {
       '@': resolve(__dirname, './src'),
     },
@@ -83,6 +85,7 @@ export default defineConfig({
     },
   },
   server: {
+    fs: { allow: [fileURLToPath(new URL('.', import.meta.url)), fileURLToPath(new URL('../shared', import.meta.url))] },
     host: '127.0.0.1',
     port: 5187,
     https: mobileDevHttpsConfig(),

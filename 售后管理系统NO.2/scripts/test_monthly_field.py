@@ -333,6 +333,11 @@ async def main():
         clock = datetime(2030, 5, 4, 8)
         row = (await own("2030-05-01"))["days"][-2]
         assert not row["project"] and row["anomalies"] == ["打卡日期与班次不符"]
+        decisions = (await req("GET", "/monthly/manager-inbox"))["items"]
+        assert {t["kind"] for t in decisions if t["id"] == same_day["id"]} == {
+            "project",
+            "hours",
+        }
         await req(
             "POST", "/monthly/confirm", json={"punch_id": same_day["id"], "code": "A"}
         )
@@ -351,6 +356,21 @@ async def main():
             april["days"][28]["missing_punches"] == 1
             and april["days"][28]["status"] == "normal"
         )
+
+        await req("GET", "/monthly/manager-inbox", "001", 403)
+        await req("GET", "/monthly/manager-inbox?count_only=true", "017", 403)
+
+        async def inbox():
+            result = await req("GET", "/monthly/manager-inbox")
+            assert (
+                (await req("GET", "/monthly/manager-inbox?count_only=true"))["total"]
+                == result["total"]
+                == len(result["items"])
+            )
+            assert [t["since"] for t in result["items"]] == sorted(
+                t["since"] for t in result["items"]
+            )
+            return result["items"]
 
         async def rest(day, mode):
             return await req(
@@ -372,9 +392,13 @@ async def main():
             item["status"] == "pending"
             and (await own("2030-05-01"))["rest_balance"] == 0
         )
+        rows = await inbox()
+        task = next(t for t in rows if t["kind"] == "rest" and t["day"] == "2030-05-06")
+        assert task["balance"] == 0
         review_url = f"/monthly/requests/{item['id']}/review"
         await req("POST", review_url, json={"approved": True})
         await req("POST", review_url, expected=409, json={"approved": True})
+        assert len(await inbox()) == len(rows) - 1
         assert (await own("2030-05-01"))["rest_balance"] == -1
         for day in range(7, 13):
             clock = datetime(2030, 5, day, 8)
@@ -402,6 +426,11 @@ async def main():
             "POST", f"/monthly/requests/{denied['id']}/review", json={"approved": False}
         )
         assert (await own("2030-05-01"))["rest_balance"] == -1
+        clock = datetime(2030, 6, 10, 9)
+        assert any(
+            t["kind"] == "hours" and t["day"] == "2030-05-04" and t["suggested"] is None
+            for t in await inbox()
+        )
     await engine.dispose()
     print(
         "NO.2 monthly attendance, permissions, GPS, overnight, approvals and settlement passed"

@@ -27,6 +27,7 @@
             <div v-for="item in group.items" :key="item.path" class="nav-item" :class="{ 'is-active': isActive(item.path) }" role="button" tabindex="0" @click="navigateTo(item.path)" @keydown.enter="navigateTo(item.path)">
               <el-icon :size="20"><component :is="item.icon" /></el-icon>
               <span v-if="!isCollapsed" class="nav-item-text">{{ item.label }}</span>
+              <b v-if="item.path==='/approval' && managerCount != null && roles.includes('aftersales_manager')" class="manager-count">{{managerCount}}</b>
               <el-tooltip v-if="isCollapsed" :content="item.label" placement="right" :show-after="200"><span class="nav-tooltip-trigger"></span></el-tooltip>
             </div>
           </div>
@@ -206,7 +207,9 @@ import { get, post } from '@/utils/request'
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+import {useManagerInboxCount} from '../../../shared/useManagerInboxCount'
 const { primaryRoleLabel, roles, isSuperuser, hasAnyRole } = useUserAccess()
+const managerCount=useManagerInboxCount(()=>roles.value.includes('aftersales_manager'),get)
 const { isMobile, isLandscapeCompact } = useResponsiveLayout()
 
 const isCollapsed = ref(false)
@@ -1038,4 +1041,5 @@ watch(isMobile, (mobile) => {
     padding-top: 0;
   }
 }
+.manager-count{color:white;background:#a74327;border-radius:12px;font-size:12px;padding:1px 6px}
 </style>

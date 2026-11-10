@@ -620,6 +620,7 @@ class ApprovalActionRequest(ApprovalRecordBase):
                          转审后，当前节点的审批人变更为目标人，
                          原审批人不再需要操作此节点。
     """
+    expected_node_order: Optional[int] = None
     transfer_to_id: Optional[int] = Field(
         None, description="转审目标人ID（action=transfer时必填）"
     )  # action=transfer 时必须指定转审对象，否则 service 层报错

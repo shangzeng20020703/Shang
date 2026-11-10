@@ -30,6 +30,7 @@
               ></small
             >
           </article>
+          <router-link to="/app/manager-inbox">审批中心 · 待我处理 {{managerCount ?? '…'}}</router-link>
           <h2>休假审批</h2>
           <article v-for="r in applications" :key="r.id">
             {{ r.name }} · {{ r.day }} · {{ r.reason }}
@@ -274,6 +275,8 @@ const manager = computed(() => auth.roles.includes('aftersales_manager')),
         ? 'out'
         : 'in',
   )
+import {useManagerInboxCount} from '../../../shared/useManagerInboxCount'
+const managerCount=useManagerInboxCount(()=>manager.value,get)
 const oldRows = ref<any[]>()
 const history = () =>
   action(async () => {

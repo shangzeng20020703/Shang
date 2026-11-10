@@ -66,7 +66,11 @@ const hideGlobalTabbar = computed(() => {
     '/app/chat',
   ].some((prefix) => route.path === prefix || route.path.startsWith(`${prefix}/`))
 })
+import {get} from '@/utils/request'
+import {useManagerInboxCount} from '../../../shared/useManagerInboxCount'
+const managerCount=useManagerInboxCount(()=>auth.roles.includes('aftersales_manager'),get)
 const approvalBadge = computed(() => {
+  if(auth.roles.includes('aftersales_manager')) return managerCount.value == null ? '' : String(managerCount.value)
   const count = inbox.approvalDisplayCount.value
   if (count > 0) {
     return count > 99 ? '99+' : `${count}`

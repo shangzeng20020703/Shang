@@ -190,7 +190,10 @@ async def initialize():
                                     customer_id=None, manager_id=None))
                 existing_codes.add(row.code)
         await db.flush()
-        for version in range(1, 20):
+        if not await db.get(FieldSchemaVersion, 20):
+            from app.services.manager_inbox import backfill
+            await backfill(db)
+        for version in range(1, 21):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

@@ -6879,6 +6879,7 @@ async def list_my_pending(
     end_date: date | datetime | None = None,
     applicant_id: Optional[int] = None,
     applicant_keyword: Optional[str] = None,
+    include_legacy: bool = False,
 ) -> tuple[int, list[ApprovalInstance]]:
     """查询我的待审批列表（支持所有 approver_type 的动态匹配）。
 
@@ -6988,7 +6989,7 @@ async def list_my_pending(
             or item.id in eligible_ids
         ]
         task_pending.sort(key=lambda item: (item.created_at, item.id), reverse=True)
-    if task_pending:
+    if task_pending and not include_legacy:
         total = len(task_pending)
         return total, task_pending[skip: skip + limit]
 
@@ -7030,7 +7031,7 @@ async def list_my_pending(
     all_pending = list(pending_result.scalars().all())
 
     if not all_pending:
-        return 0, []
+        return len(task_pending), task_pending[skip:skip+limit]
 
     # ── 预加载优化：批量查询所有需要的 ApprovalNode 和 Employee 信息 ──
     # 收集所有 (flow_id, node_order) 对和所有 applicant_id
@@ -7112,6 +7113,9 @@ async def list_my_pending(
             matching.append(inst)
 
     # 在内存中分页（因过滤逻辑无法在 SQL 层实现）
+    if include_legacy:
+        matching = list({inst.id: inst for inst in [*matching, *task_pending]}.values())
+        matching.sort(key=lambda inst: (inst.created_at, inst.id), reverse=True)
     total = len(matching)
     paginated = matching[skip: skip + limit]
     return total, paginated
@@ -7558,6 +7562,14 @@ async def process_approval(
     approver_id: int,
     data: ApprovalActionRequest,
 ) -> ApprovalInstance:
+    if data.expected_node_order is not None:
+        from sqlalchemy import update
+        claim = await db.execute(update(ApprovalInstance).where(
+            ApprovalInstance.id == instance_id, ApprovalInstance.status == "pending",
+            ApprovalInstance.current_node_order == data.expected_node_order,
+        ).values(updated_at=ApprovalInstance.updated_at))
+        if claim.rowcount != 1:
+            raise HTTPException(409, "该事项已处理，请刷新待办")
     instance = await get_instance(db, instance_id)
 
     if instance.status != "pending":

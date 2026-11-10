@@ -21,6 +21,7 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
+      "vue": ["node_modules/vue"],
       "@/*": [
         "./src/*"
       ]

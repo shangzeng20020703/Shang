@@ -13,6 +13,7 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
+      "vue": ["node_modules/vue"],
       "@/*": ["src/*"]
     },
     "types": ["vite/client"]

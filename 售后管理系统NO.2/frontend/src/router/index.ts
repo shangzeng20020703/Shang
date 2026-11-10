@@ -15,7 +15,7 @@ const router=createRouter({history:createWebHistory(),routes:[
 {path:'employees',component:()=>import('@/views/FieldPeople.vue'),meta:{title:'人员花名册',roles:roster}},
 {path:'organization',component:()=>import('@/views/OrganizationView.vue'),meta:{title:'组织架构',roles:admin}},
 {path:'attendance',component:()=>import('@/views/AttendanceView.vue'),meta:{title:'考勤管理',roles:rules}},
-{path:'approval',component:()=>import('@/views/ApprovalView.vue'),meta:{title:'审批与模板'}},
+{path:'approval',component:()=>import('@/views/ApprovalEntry.vue'),meta:{title:'审批与模板'}},
 {path:'audit',component:()=>import('@/views/FieldAudit.vue'),meta:{title:'操作日志',roles:admin}},
 {path:'event-monitor',component:()=>import('@/views/EventMonitorView.vue'),meta:{title:'业务事件',roles:admin}},
 ]}, {path:'/:pathMatch(.*)*',redirect:'/dashboard'}]})
