@@ -1,0 +1,37 @@
+{
+  "name": "aftersales-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "test:e2e": "playwright test",
+    "preview": "vite preview",
+    "sync:android": "npx cap sync android",
+    "sync:ios": "npx cap sync ios",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/geolocation": "^6.1.1",
+    "@capacitor/ios": "^6.2.0",
+    "@ionic/vue": "^8.4.2",
+    "@ionic/vue-router": "^8.4.2",
+    "axios": "^1.8.4",
+    "ionicons": "^7.4.0",
+    "pinia": "^2.3.1",
+    "vue": "^3.5.32",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.13.10",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.21",
+    "vue-tsc": "^2.2.4"
+  }
+}

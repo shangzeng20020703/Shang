@@ -1,0 +1,22 @@
+# Beijing production: dedicated, preallocated 20 GiB filesystem.
+# These subdirectories must exist only inside the mounted filesystem so a failed
+# mount stops container startup instead of writing data into the host root disk.
+volumes:
+  mysql-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/aftersales/storage/mysql
+  upload-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/aftersales/storage/uploads
+  app-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /srv/aftersales/storage/app
