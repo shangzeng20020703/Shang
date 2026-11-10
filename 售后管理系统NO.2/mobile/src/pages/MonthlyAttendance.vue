@@ -82,31 +82,30 @@
             >
               继续 {{ ctx.resume_night_day }} 的夜班
             </button>
-            <dialog ref="shiftDialog" aria-label="选择上班班次">
-              <h2>选择本次上班班次</h2>
-              <button @click="chooseShift('day')">白班（早班）</button>
-              <button @click="chooseShift('night')">夜班（晚班）</button>
-              <button v-if="ctx.earned_rest" @click="previewRest(ctx.day)">
+            <dialog ref="shiftDialog" aria-label="选择打卡方式">
+              <h2>选择打卡方式</h2>
+              <button v-if="!ctx.shifts" @click="chooseShift()">上班打卡</button>
+              <button v-if="ctx.shifts" @click="chooseShift('day')">白班（早班）</button>
+              <button v-if="ctx.shifts" @click="chooseShift('night')">夜班（晚班）</button>
+              <button @click="openRest">
                 休假
               </button>
               <button @click="shiftDialog?.close()">取消</button>
             </dialog>
             <dialog ref="restDialog" aria-label="确认整天休假">
-              <form v-if="quote" @submit.prevent="confirmRest">
-                <h2>{{ quote.day }} · 休假 1 天</h2>
-                <p>
-                  当前余额 {{ quote.balance }} 天 ·
-                  {{ quote.mode === 'direct' ? '休后' : '获批后' }}余额
-                  {{ quote.after }} 天
-                </p>
-                <label v-if="quote.mode === 'request'"
-                  >申请原因
-                  <input v-model.trim="reason" required maxlength="500"
-                /></label>
-                <button :disabled="busy">
-                  {{
-                    quote.mode === 'direct' ? '确认休假' : '提交售后经理审批'
-                  }}
+              <form @submit.prevent="confirmRest">
+                <h2>休假 1 天</h2>
+                <label>休假日期
+                  <input type="date" required v-model="restDay" :max="ctx.day"
+                    :min="ctx.earned_rest ? ctx.earned_from : undefined" @change="loadQuote" />
+                </label>
+                <p v-if="quote">当前余额 {{ quote.balance }} 天 ·
+                  {{ quote.mode === 'direct' ? '休后' : '获批后' }}余额 {{ quote.after }} 天</p>
+                <p v-if="restError" role="alert">{{ restError }}</p>
+                <label v-if="!ctx.earned_rest || quote?.mode === 'request'">申请原因
+                  <input v-model.trim="reason" required maxlength="500" /></label>
+                <button :disabled="busy || !restDay || (ctx.earned_rest && quote?.day !== restDay)">
+                  {{ quote?.mode === 'direct' ? '确认休假' : '提交售后经理审批' }}
                 </button>
                 <button type="button" @click="restDialog?.close()">取消</button>
               </form>
@@ -139,80 +138,55 @@
               ></small
             >
           </p>
-          <details
-            v-for="d in [...(rows[0]?.days || [])].reverse()"
-            :key="d.day"
-          >
-            <summary>
-              {{ d.day }}　<span :class="d.status">{{ labels[d.status] }}</span
-              >　{{ d.project?.name }}
-            </summary>
-            <small v-if="d.shift"
-              >{{ shiftLabel(d.shift) }} · 实际
-              {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
-              {{ labels[d.hours_status] }}</small
+          <details class="history">
+            <summary>历史打卡记录</summary>
+            <details
+              v-for="d in [...(rows[0]?.days || [])].reverse()"
+              :key="d.day"
             >
-            <small v-if="d.shift"
-              >要求 12 小时 ·
-              {{
-                d.suggested_minutes == null
-                  ? '缺卡，差额待核定'
-                  : '打卡差额 ' + duration(d.suggested_minutes)
-              }}</small
-            >
-            <small v-if="d.review"
-              >{{ d.review.reason }} · 核定缺
-              {{ duration(d.review.missing_minutes) }}</small
-            >
-            <p>{{ d.holiday }} {{ d.anomalies.join('、') }}</p>
-            <small v-if="d.status === 'absent'"
-              >{{ d.start.replace('T', ' ') }} 至
-              {{ d.end.replace('T', ' ') }}</small
-            ><small v-for="p in d.punches" :key="p.id"
-              >{{ p.corrected ? '审批补卡 · ' : '' }}{{ p.kind === 'in' ? '上班' : '下班' }}
-              {{ p.at.slice(5, 19).replace('T', ' ') }} ·
-              {{ p.matches.map((m: any) => m.name).join(' / ') }}</small
-            >
-            <small v-for="h in d.prior_hours_reviews" :key="h.at">补卡前的工时审批 · {{ labels[h.outcome] }} · {{ h.reason }}</small>
-            <MonthlyCorrection :day="d" @submitted="refresh" />
+              <summary>
+                {{ d.day }}　<span :class="d.status">{{ labels[d.status] }}</span
+                >　{{ d.project?.name }}
+              </summary>
+              <small v-if="d.shift"
+                >{{ shiftLabel(d.shift) }} · 实际
+                {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
+                {{ labels[d.hours_status] }}</small
+              >
+              <small v-if="d.shift"
+                >要求 12 小时 ·
+                {{
+                  d.suggested_minutes == null
+                    ? '缺卡，差额待核定'
+                    : '打卡差额 ' + duration(d.suggested_minutes)
+                }}</small
+              >
+              <small v-if="d.review"
+                >{{ d.review.reason }} · 核定缺
+                {{ duration(d.review.missing_minutes) }}</small
+              >
+              <p>{{ d.holiday }} {{ d.anomalies.join('、') }}</p>
+              <small v-if="d.status === 'absent'"
+                >{{ d.start.replace('T', ' ') }} 至
+                {{ d.end.replace('T', ' ') }}</small
+              ><small v-for="p in d.punches" :key="p.id"
+                >{{ p.corrected ? '审批补卡 · ' : '' }}{{ p.kind === 'in' ? '上班' : '下班' }}
+                {{ p.at.slice(5, 19).replace('T', ' ') }} ·
+                {{ p.matches.map((m: any) => m.name).join(' / ') }}</small
+              >
+              <small v-for="h in d.prior_hours_reviews" :key="h.at">补卡前的工时审批 · {{ labels[h.outcome] }} · {{ h.reason }}</small>
+              <small v-if="d.application">休假{{ states[d.application.status] }} · {{ d.application.reason }} {{ d.application.note }}</small>
+              <MonthlyCorrection :day="d" @submitted="refresh" />
+            </details>
+            <details>
+              <summary>查询所选月份的旧版记录</summary>
+              <button @click="history">查询历史打卡、排班与轮休流水</button>
+              <p v-for="(r, i) in oldRows" :key="i">
+                {{ r.day }} · {{ r.kind }} · {{ r.detail }}
+              </p>
+              <small v-if="oldRows && !oldRows.length">该月无旧版记录</small>
+            </details>
           </details>
-          <details>
-            <summary>查询所选月份的旧版记录</summary>
-            <button @click="history">查询历史打卡、排班与轮休流水</button>
-            <p v-for="(r, i) in oldRows" :key="i">
-              {{ r.day }} · {{ r.kind }} · {{ r.detail }}
-            </p>
-            <small v-if="oldRows && !oldRows.length">该月无旧版记录</small>
-          </details>
-          <h2>休假登记与补休</h2>
-          <form v-if="ctx.earned_rest" @submit.prevent="previewRest(restDay)">
-            <input
-              aria-label="休假日期"
-              type="date"
-              required
-              v-model="restDay"
-              :min="ctx.earned_from"
-              :max="ctx.day"
-            />
-            <button :disabled="busy">查看余额并确认</button>
-          </form>
-          <form v-else @submit.prevent="apply">
-            <input
-              aria-label="休息日期"
-              type="date"
-              required
-              v-model="restDay"
-            /><input
-              aria-label="原因"
-              required
-              maxlength="500"
-              placeholder="申请原因"
-              v-model.trim="reason"
-            /><button :disabled="busy">提交整天休息申请</button>
-          </form>
-          <p v-for="r in applications" :key="r.day">
-            {{ r.day }}　{{ states[r.status] }}　{{ r.reason }} {{ r.note }}
-          </p>
           <router-link to="/app/approval/start"
             >请假、出差及其他申请</router-link
           ></template
@@ -295,7 +269,6 @@ async function refresh() {
     ctx.value = await get('/monthly/context')
     const day = ctx.value.day
     month.value ||= day.slice(0, 7)
-    restDay.value ||= day
     const route = manager.value ? '/monthly/report' : '/monthly/me'
     rows.value = await get(route, { month: month.value + '-01' })
     if (!manager.value) {
@@ -305,9 +278,7 @@ async function refresh() {
           : await get(route, { month: day.slice(0, 7) + '-01' })
       currentDay.value = current[0]?.days.find((d: any) => d.day === day)
     }
-    applications.value = await get(
-      manager.value ? '/monthly/requests' : '/monthly/me/requests',
-    )
+    if (manager.value) applications.value = await get('/monthly/requests')
   } catch (e: any) {
     error.value = String(e.response?.data?.detail || '考勤读取失败')
   }
@@ -340,40 +311,49 @@ async function startPunch() {
   } finally {
     busy.value = false
   }
-  if (ctx.value.shifts && nextKind.value === 'in' && !ctx.value.shift)
+  if (nextKind.value === 'in' && !ctx.value.shift)
     shiftDialog.value?.showModal()
   else punch()
 }
 const restDialog = ref<HTMLDialogElement>(),
-  quote = ref<any>()
-async function previewRest(day: string) {
-  if (busy.value) return
+  quote = ref<any>(),
+  restError = ref('')
+function openRest() {
   shiftDialog.value?.close()
-  busy.value = true
-  error.value = ''
+  reason.value = ''
+  restDay.value = ctx.value.day
+  restDialog.value?.showModal()
+  void loadQuote()
+}
+let previewRevision = 0
+async function loadQuote() {
+  const revision = ++previewRevision
+  quote.value = undefined
+  restError.value = ''
+  if (!ctx.value.earned_rest || !restDay.value) return
   try {
-    quote.value = await get('/monthly/me/rest-preview', { day })
-    reason.value = ''
-    restDialog.value?.showModal()
+    const result = await get('/monthly/me/rest-preview', { day: restDay.value })
+    if (revision === previewRevision) quote.value = result
   } catch (e: any) {
-    error.value = e.response?.data?.detail || '读取休假余额失败'
-  } finally {
-    busy.value = false
+    if (revision === previewRevision) restError.value = e.response?.data?.detail || '读取休假余额失败'
   }
 }
 const confirmRest = () =>
   action(async () => {
-    restDialog.value?.close()
+    if (ctx.value.earned_rest && quote.value?.day !== restDay.value) return
     const result = await post('/monthly/rest', {
-      day: quote.value.day,
-      mode: quote.value.mode,
-      expected_balance: quote.value.balance,
+      day: restDay.value,
+      mode: quote.value?.mode,
+      expected_balance: quote.value?.balance,
       reason: reason.value,
+    }).catch((e: any) => {
+      restError.value = e.response?.data?.detail || '休假提交失败，请重试'
+      throw e
     })
-    feedback.value =
-      result.status === 'approved' ? '已确认休假' : '已提交售后经理审批'
+    restDialog.value?.close()
+    feedback.value = result.status === 'approved' ? '已确认休假' : '已提交售后经理审批'
   })
-function chooseShift(shift: string) {
+function chooseShift(shift?: string) {
   shiftDialog.value?.close()
   punch(shift)
 }
@@ -430,11 +410,6 @@ async function punch(shift?: string, day = ctx.value.day) {
     photo.value = undefined
   })
 }
-const apply = () =>
-  action(async () => {
-    await post('/monthly/rest', { day: restDay.value, reason: reason.value })
-    reason.value = ''
-  })
 const decide = (id: number, approved: boolean) =>
   action(() => post('/monthly/requests/' + id + '/review', { approved }))
 function logout() {
@@ -475,6 +450,13 @@ details {
   padding: 14px;
   margin: 10px 0;
   border-radius: 8px;
+}
+.history > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.history > details {
+  background: white;
 }
 small {
   display: block;

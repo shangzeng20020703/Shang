@@ -1,0 +1,156 @@
+"""NO.2 attendance facts. Times are stored as Beijing local wall time."""
+
+from datetime import date, datetime
+from sqlalchemy import Date, DateTime, ForeignKey, JSON, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column
+from app.core.database import Base
+
+
+class MonthlyPolicy(Base):
+    __tablename__ = "field_monthly_policies"
+    effective: Mapped[date] = mapped_column(Date, primary_key=True)
+    cutoff: Mapped[int]
+    minutes: Mapped[int]
+    shifts: Mapped[bool] = mapped_column(default=False, server_default="0")
+    photo: Mapped[bool]
+
+
+class ProjectRadius(Base):
+    __tablename__ = "field_monthly_radii"
+    code: Mapped[str] = mapped_column(String(50), primary_key=True)
+    meters: Mapped[int]
+
+
+class MonthlyPunch(Base):
+    __tablename__ = "field_monthly_punches"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "request_key"),
+        UniqueConstraint("employee_id", "day", "sequence"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    at: Mapped[datetime] = mapped_column(DateTime)
+    sequence: Mapped[int]
+    request_key: Mapped[str] = mapped_column(String(36))
+    kind: Mapped[str] = mapped_column(String(4))
+    latitude: Mapped[float | None]
+    longitude: Mapped[float | None]
+    matches: Mapped[list] = mapped_column(JSON)
+    photo: Mapped[str] = mapped_column(String(500), default="")
+
+    @property
+    def corrected(self):
+        # Live punches have UUID request keys; this namespace belongs to approvals.
+        return self.request_key.startswith("correction:")
+
+
+class MonthlyCorrection(Base):
+    __tablename__ = "field_monthly_corrections"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    shift: Mapped[str] = mapped_column(String(5))
+    check_in: Mapped[datetime | None] = mapped_column(DateTime)
+    check_out: Mapped[datetime | None] = mapped_column(DateTime)
+    projects: Mapped[list] = mapped_column(JSON)
+    original: Mapped[list] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(12), index=True)
+    created: Mapped[datetime] = mapped_column(DateTime)
+    manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    reviewed: Mapped[datetime | None] = mapped_column(DateTime)
+    note: Mapped[str] = mapped_column(String(500), default="")
+
+
+class ProjectConfirmation(Base):
+    __tablename__ = "field_monthly_confirmations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    punch_id: Mapped[int] = mapped_column(
+        ForeignKey("field_monthly_punches.id"), unique=True
+    )
+    code: Mapped[str] = mapped_column(String(50))
+    manager_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MonthlyRest(Base):
+    __tablename__ = "field_monthly_rest"
+    __table_args__ = (UniqueConstraint("employee_id", "day"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    reason: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    created: Mapped[datetime] = mapped_column(DateTime)
+    manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
+    reviewed: Mapped[datetime | None] = mapped_column(DateTime)
+    note: Mapped[str] = mapped_column(String(500), default="")
+
+
+class MonthlyAbsence(Base):
+    __tablename__ = "field_monthly_absences"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    start: Mapped[datetime] = mapped_column(DateTime)
+    end: Mapped[datetime] = mapped_column(DateTime)
+    active: Mapped[bool] = mapped_column(default=True)
+
+
+class MonthlyEligibility(Base):
+    __tablename__ = "field_monthly_eligibility"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    eligible: Mapped[bool]
+
+
+class MonthlyShift(Base):
+    __tablename__ = "field_monthly_shifts"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(5))
+    started: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MonthlyHoursReview(Base):
+    __tablename__ = "field_monthly_hours_reviews"
+    # A decision covers this exact sequence of immutable punches.
+    punch_id: Mapped[int] = mapped_column(
+        ForeignKey("field_monthly_punches.id"), primary_key=True
+    )
+    outcome: Mapped[str] = mapped_column(String(12))
+    missing_minutes: Mapped[int]
+    reason: Mapped[str] = mapped_column(String(500))
+    manager_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MonthlyRestFact(Base):
+    """Each attendance day can contribute one full workday or spend one day of leave."""
+
+    __tablename__ = "field_monthly_rest_facts"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    punch_id: Mapped[int | None] = mapped_column(ForeignKey("field_monthly_punches.id"))
+    rest_id: Mapped[int | None] = mapped_column(ForeignKey("field_monthly_rest.id"))
+
+
+class MonthlyPunchTodo(Base):
+    """Only unresolved decisions; timestamps make cutoff-driven tasks visible on time."""
+
+    __tablename__ = "field_monthly_punch_todos"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    punch_id: Mapped[int] = mapped_column(ForeignKey("field_monthly_punches.id"))
+    hours_due: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    project_due: Mapped[datetime | None] = mapped_column(DateTime, index=True)
