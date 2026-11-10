@@ -114,43 +114,45 @@
           <label
             >考勤月份 <input type="month" v-model="month" @change="refresh"
           /></label>
-          <p>
-            实际打卡 {{ rows[0]?.punch_count || 0 }} 次 · 审批补卡 {{ rows[0]?.corrected_count || 0 }} 次 · 满勤
-            {{ rows[0]?.full_days || 0 }} 天 · 已休
-            {{ rows[0]?.leave_days || 0 }} 天 · 缺卡
-            {{ rows[0]?.missing_punches || 0 }} 次 · 缺勤
-            {{ rows[0]?.absence_days || 0 }} 天
-          </p>
-          <p v-if="rows[0]?.earned_rest">
-            休假余额 {{ rows[0].rest_balance }} 天 · 攒假进度
-            {{ rows[0].work_progress }}/6 天
-          </p>
-          <p v-if="rows[0]">
-            已确认缺工时 {{ duration(rows[0].shortage_minutes) }}（{{
-              rows[0].shortage_days
-            }}
-            天）
-            <small v-if="rows[0].pending_hours_days"
-              >待审 {{ rows[0].pending_hours_days }} 天 · 可核算
-              {{ duration(rows[0].pending_estimate_minutes)
-              }}<template v-if="rows[0].pending_unknown_days">
-                · {{ rows[0].pending_unknown_days }} 天待核定</template
-              ></small
-            >
-          </p>
-          <details class="history">
+          <template v-if="report">
+            <dl class="month-totals">
+              <div><dt>本月满勤</dt><dd>{{ report.full_days }} <span>天</span></dd></div>
+              <div><dt>休假余额</dt><dd>{{ report.rest_balance < 0 ? '−' + Math.abs(report.rest_balance) : report.rest_balance }} <span>天</span></dd></div>
+            </dl>
+            <button v-if="alertText" class="month-alert" type="button" aria-controls="employee-history" @click="showExceptions">
+              {{ alertText }} <span aria-hidden="true">›</span>
+            </button>
+            <details :key="month" class="month-detail">
+              <summary>查看月度明细</summary>
+              <dl class="month-stats">
+                <div><dt>实际打卡</dt><dd>{{ report.punch_count }} 次</dd></div>
+                <div><dt>审批补卡</dt><dd>{{ report.corrected_count }} 次</dd></div>
+                <div><dt>已休</dt><dd>{{ report.leave_days }} 天</dd></div>
+                <div><dt>缺卡</dt><dd>{{ report.missing_punches }} 次</dd></div>
+                <div><dt>缺勤</dt><dd>{{ report.absence_days }} 天</dd></div>
+                <div v-if="report.earned_rest"><dt>攒假进度</dt><dd>{{ report.work_progress }}/6 天</dd></div>
+                <div><dt>已确认缺工时</dt><dd>{{ duration(report.shortage_minutes) }}（{{ report.shortage_days }} 天）</dd></div>
+                <div v-if="report.pending_hours_days"><dt>待审批工时异常</dt><dd>{{ report.pending_hours_days }} 天</dd></div>
+                <div v-if="report.pending_hours_days > report.pending_unknown_days"><dt>可核算差额</dt><dd>{{ duration(report.pending_estimate_minutes) }}</dd></div>
+                <div v-if="report.pending_unknown_days"><dt>缺卡时长</dt><dd>{{ report.pending_unknown_days }} 天待核定</dd></div>
+              </dl>
+            </details>
+          </template>
+          <p v-else-if="loadedMonth === month">该月暂无考勤记录</p>
+          <details class="history" id="employee-history" ref="historyPanel" :key="'history-' + month">
             <summary>历史打卡记录</summary>
             <details
-              v-for="d in [...(rows[0]?.days || [])].reverse()"
+              v-for="d in [...(report?.days || [])].reverse()"
               :key="d.day"
+              :data-day="d.day"
             >
               <summary>
                 {{ d.day }}　<span :class="d.status">{{ labels[d.status] }}</span
                 >　{{ d.project?.name }}
               </summary>
               <small v-if="d.shift"
-                >{{ shiftLabel(d.shift) }} · 实际
-                {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
+                >{{ shiftLabel(d.shift) }} · 实际工时
+                {{ d.missing_punches && d.suggested_minutes == null ? '待核定' : duration(Math.floor(d.worked_seconds / 60)) }} ·
                 {{ labels[d.hours_status] }}</small
               >
               <small v-if="d.shift"
@@ -254,6 +256,40 @@ const manager = computed(() => auth.roles.includes('aftersales_manager')),
   )
 import {useManagerInboxCount} from '../../../shared/useManagerInboxCount'
 const managerCount=useManagerInboxCount(()=>manager.value,get)
+const loadedMonth = ref('')
+const report = computed(() => loadedMonth.value === month.value ? rows.value[0] : undefined)
+const historyPanel = ref<HTMLDetailsElement>()
+function projectUnconfirmed(d: any) {
+  return !d.project && d.projects.length > 1
+}
+const exceptionDays = computed(() => new Set<string>((report.value?.days || [])
+  .filter((d: any) => d.missing_punches || d.status === 'absent' ||
+    ['pending_hours', 'shortage'].includes(d.hours_status) || projectUnconfirmed(d))
+  .map((d: any) => d.day)))
+const alertText = computed(() => {
+  const r = report.value
+  if (!r) return ''
+  const projects = r.days.filter(projectUnconfirmed).length
+  return [
+    r.missing_punches && `缺卡 ${r.missing_punches} 次`,
+    r.pending_hours_days && `工时待核定 ${r.pending_hours_days} 天`,
+    r.absence_days && `缺勤 ${r.absence_days} 天`,
+    r.shortage_days && `已确认缺工时 ${r.shortage_days} 天`,
+    projects && `项目待确认 ${projects} 天`,
+  ].filter(Boolean).join(' · ')
+})
+function showExceptions() {
+  const history = historyPanel.value
+  if (!history) return
+  history.open = true
+  let first: HTMLDetailsElement | undefined
+  for (const row of history.querySelectorAll<HTMLDetailsElement>('details[data-day]')) {
+    row.open = exceptionDays.value.has(row.dataset.day || '')
+    if (row.open) first ??= row
+  }
+  first?.querySelector('summary')?.focus({ preventScroll: true })
+  first?.scrollIntoView({block: 'start'})
+}
 const oldRows = ref<any[]>()
 const history = () =>
   action(async () => {
@@ -270,7 +306,12 @@ async function refresh() {
     const day = ctx.value.day
     month.value ||= day.slice(0, 7)
     const route = manager.value ? '/monthly/report' : '/monthly/me'
-    rows.value = await get(route, { month: month.value + '-01' })
+    const selected = month.value
+    const result = await get(route, { month: selected + '-01' })
+    if (selected !== month.value) return
+    if (loadedMonth.value !== selected) oldRows.value = undefined
+    loadedMonth.value = selected
+    rows.value = result
     if (!manager.value) {
       const current =
         month.value === day.slice(0, 7)
@@ -451,7 +492,17 @@ details {
   margin: 10px 0;
   border-radius: 8px;
 }
-.history > summary {
+.month-totals, .month-stats { margin: 12px 0; }
+.month-totals { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); padding: 16px 0; border-block: 1px solid #dce5e9; }
+.month-totals > div + div { border-left: 1px solid #dce5e9; padding-left: 20px; }
+.month-totals dt { color: #526571; font-size: 14px; }
+.month-totals dd { margin: 4px 0 0; font-size: 26px; font-weight: 650; }
+.month-totals dd span { font-size: 14px; font-weight: 400; }
+.month-alert { width: 100%; text-align: left; color: #724000; background: #fff5de; border: 0; padding: 10px 12px; }
+.month-alert span { float: right; }
+.month-stats div { display: flex; justify-content: space-between; gap: 10px; padding-block: 4px; }
+.month-stats dd { margin: 0; text-align: right; }
+.month-detail > summary, .history > summary {
   cursor: pointer;
   font-weight: 600;
 }
