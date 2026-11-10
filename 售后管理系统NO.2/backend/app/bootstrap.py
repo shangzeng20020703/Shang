@@ -166,6 +166,11 @@ async def initialize():
     # Additive tables: identity, project bindings, participation intervals and punch segments.
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        columns = await connection.run_sync(
+            lambda c: inspect(c).get_columns("field_monthly_policies"))
+        if not any(col["name"] == "shifts" for col in columns):
+            await connection.exec_driver_sql(
+                "ALTER TABLE field_monthly_policies ADD COLUMN shifts BOOLEAN NOT NULL DEFAULT FALSE")
     await _migrate_project_nullable_columns()
     async with async_session() as db:
         from app.services.field_membership import migrate_assignments
@@ -185,7 +190,7 @@ async def initialize():
                                     customer_id=None, manager_id=None))
                 existing_codes.add(row.code)
         await db.flush()
-        for version in range(1, 18):
+        for version in range(1, 19):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 from pathlib import PurePosixPath
 from uuid import UUID
 
@@ -12,12 +13,15 @@ from app.models.employee import Employee
 from app.models.field_service import FieldFile, FieldProject, FieldProjectCatalog
 from app.models.monthly_field import (
     MonthlyPolicy,
+    MonthlyShift,
+    MonthlyHoursReview,
     MonthlyPunch,
     MonthlyRest,
     ProjectConfirmation,
     ProjectRadius,
 )
 from app.services import monthly_field as monthly
+from app.services import monthly_shifts as shifts
 from app.services.attendance import AttendanceRecordService
 from app.services.field_roles import is_aftersales_person, role_names
 
@@ -56,9 +60,18 @@ class LocationInput(BaseModel):
 class PunchInput(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+    shift: Literal["day", "night"] | None = None
+    attendance_day: date | None = None
     request_key: UUID
     kind: str = Field(pattern="^(in|out)$")
     photo: str = Field(default="", max_length=500)
+
+
+class HoursDecision(BaseModel):
+    punch_id: int
+    outcome: Literal["normal", "shortage"]
+    missing_minutes: int = Field(ge=0, le=720)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class RestInput(BaseModel):
@@ -79,10 +92,19 @@ class Resolution(BaseModel):
 @router.get("/context")
 async def context(user=Depends(get_current_user), db=Depends(get_db)):
     rules = await monthly.policies(db)
-    day = monthly.work_day(rules, monthly.now())
+    stamp = monthly.now()
+    day = monthly.work_day(rules, stamp)
     rule = monthly.rule_for(rules, day)
     names = await role_names(db, user)
+    shift = previous = resume = None
+    if rule and rule.shifts:
+        day, shift, previous, resume = await shifts.punch_context(db, user.id, stamp)
+        rule = monthly.rule_for(rules, day)
     return dict(
+        shifts=bool(rule and rule.shifts),
+        shift=shift.kind if shift else None,
+        next_kind="out" if previous and previous.kind == "in" else "in",
+        resume_night_day=resume,
         day=day,
         active=bool(rule),
         manager="aftersales_manager" in names,
@@ -90,7 +112,13 @@ async def context(user=Depends(get_current_user), db=Depends(get_db)):
         and not names & {"admin", "aftersales_manager"},
         minutes=rule.minutes if rule else None,
         photo=rule.photo if rule else False,
-        policies=[PolicyInput.model_validate(r, from_attributes=True) for r in rules],
+        policies=[
+            dict(
+                **PolicyInput.model_validate(r, from_attributes=True).model_dump(),
+                shifts=r.shifts,
+            )
+            for r in rules
+        ],
     )
 
 
@@ -102,7 +130,11 @@ async def save_policy(body: PolicyInput, user=Depends(manager), db=Depends(get_d
         raise HTTPException(422, "首份规则可从今天开始，后续修改请选择未来日期")
     if any(r.effective == body.effective for r in rules):
         raise HTTPException(409, "该日已有规则")
-    db.add(MonthlyPolicy(**body.model_dump()))
+    if body.minutes != shifts.REQUIRED_MINUTES or body.cutoff != 0:
+        raise HTTPException(422, "白班和夜班均应出勤12小时，按北京时间上班日期归属")
+    if any(r.effective > body.effective and not r.shifts for r in rules):
+        raise HTTPException(409, "请在已安排的旧规则之后启用班次")
+    db.add(MonthlyPolicy(**body.model_dump(), shifts=True))
     await db.flush()
     return body
 
@@ -154,6 +186,20 @@ async def punch(body: PunchInput, user=Depends(employee), db=Depends(get_db)):
     rule = monthly.rule_for(rules, day)
     if not rule or (user.hire_date and day < user.hire_date):
         raise HTTPException(409, "尚未进入有效考勤日")
+    shift = None
+    if rule.shifts:
+        day, shift, previous, _ = await shifts.punch_context(
+            db, user.id, stamp, body.attendance_day
+        )
+        if body.attendance_day and body.attendance_day != day:
+            raise HTTPException(409, "请先完成当前班次的下班卡")
+        if not shift and not body.shift:
+            raise HTTPException(422, "上班打卡前请选择白班或夜班")
+        if shift and body.shift and shift.kind != body.shift:
+            raise HTTPException(409, "本考勤日班次已锁定")
+        rule = monthly.rule_for(rules, day)
+    else:
+        previous = await shifts.last_punch(db, user.id, day)
     if rule.photo or body.photo:
         file = await db.scalar(
             select(FieldFile.id).where(
@@ -185,27 +231,71 @@ async def punch(body: PunchInput, user=Depends(employee), db=Depends(get_db)):
     )
     if not matches:
         raise HTTPException(422, "不在有效项目范围内，请重新定位")
-    previous = await db.scalar(
-        select(MonthlyPunch)
-        .where(MonthlyPunch.employee_id == user.id, MonthlyPunch.day == day)
-        .order_by(MonthlyPunch.id.desc())
-        .limit(1)
-    )
     expected = "out" if previous and previous.kind == "in" else "in"
     if body.kind != expected:
         raise HTTPException(409, "打卡状态已变化，请刷新后重试")
+    if rule.shifts and shift is None:
+        db.add(
+            MonthlyShift(employee_id=user.id, day=day, started=stamp, kind=body.shift)
+        )
     item = MonthlyPunch(
         employee_id=user.id,
         day=day,
         at=stamp,
         matches=matches,
         sequence=previous.sequence + 1 if previous else 1,
-        **body.model_dump(exclude={"request_key"}),
+        **body.model_dump(exclude={"request_key", "shift", "attendance_day"}),
         request_key=key,
     )
     db.add(item)
     await db.flush()
     return dict(id=item.id, day=day, matches=matches)
+
+
+@router.post("/hours/review")
+async def review_hours(body: HoursDecision, user=Depends(manager), db=Depends(get_db)):
+    target = await db.get(MonthlyPunch, body.punch_id)
+    if not target:
+        raise HTTPException(404, "打卡记录不存在")
+    await db.scalar(
+        select(Employee.id).where(Employee.id == target.employee_id).with_for_update()
+    )
+    shift = await db.get(MonthlyShift, (target.employee_id, target.day))
+    logs = list(
+        await db.scalars(
+            select(MonthlyPunch)
+            .where(
+                MonthlyPunch.employee_id == target.employee_id,
+                MonthlyPunch.day == target.day,
+            )
+            .order_by(MonthlyPunch.sequence)
+        )
+    )
+    if not shift or logs[-1].id != target.id:
+        raise HTTPException(409, "请刷新当日班次和打卡记录")
+    existing = await db.get(MonthlyHoursReview, target.id)
+    if (
+        existing
+        or shifts.evaluate(shift, logs, monthly.now(), None)["hours_status"]
+        != "pending_hours"
+    ):
+        raise HTTPException(409, "当前没有待审批的工时异常")
+    if not body.reason.strip() or (body.outcome == "shortage") != (
+        body.missing_minutes > 0
+    ):
+        raise HTTPException(422, "请填写原因，并为缺工时填入有效分钟数")
+    db.add(
+        MonthlyHoursReview(
+            punch_id=target.id,
+            manager_id=user.id,
+            at=monthly.now(),
+            outcome=body.outcome,
+            missing_minutes=body.missing_minutes,
+            reason=body.reason.strip(),
+        )
+    )
+    await db.flush()
+    return {"outcome": body.outcome}
 
 
 @router.get("/me")

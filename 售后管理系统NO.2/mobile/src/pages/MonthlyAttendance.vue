@@ -15,6 +15,7 @@
           /></label>
           <article v-for="r in rows" :key="r.employee_id">
             <b>{{ r.name }}</b> · {{ labels[r.days.at(-1)?.status] }}
+            {{ shiftLabel(r.days.at(-1)?.shift) }} ·
             {{ r.days.at(-1)?.project?.name
             }}<small
               >本月已休 {{ r.rest_used }} 天 · 缺勤
@@ -38,6 +39,11 @@
               {{ labels[currentDay?.status] || '待打卡' }}</strong
             >
             <p>每日应出勤 {{ (ctx.minutes || 0) / 60 }} 小时</p>
+            <p v-if="ctx.shift">
+              {{ shiftLabel(ctx.shift) }} · 已记录
+              {{ duration(Math.floor((currentDay?.worked_seconds || 0) / 60)) }}
+            </p>
+            <p v-if="feedback" role="status">{{ feedback }}</p>
             <p v-if="currentDay?.project">{{ currentDay.project.name }}</p>
             <label v-if="ctx.photo"
               >打卡照片
@@ -50,7 +56,7 @@
             <button
               class="primary"
               :disabled="busy || !ctx.active"
-              @click="punch"
+              @click="startPunch"
             >
               {{
                 busy
@@ -60,6 +66,19 @@
                     : '定位并下班打卡'
               }}
             </button>
+            <button
+              v-if="ctx.resume_night_day"
+              :disabled="busy"
+              @click="punch('night', ctx.resume_night_day)"
+            >
+              继续 {{ ctx.resume_night_day }} 的夜班
+            </button>
+            <dialog ref="shiftDialog" aria-label="选择上班班次">
+              <h2>选择本次上班班次</h2>
+              <button @click="chooseShift('day')">白班（早班）</button>
+              <button @click="chooseShift('night')">夜班（晚班）</button>
+              <button @click="shiftDialog?.close()">取消</button>
+            </dialog>
           </section>
           <label
             >考勤月份 <input type="month" v-model="month" @change="refresh"
@@ -76,13 +95,22 @@
               {{ d.day }}　<span :class="d.status">{{ labels[d.status] }}</span
               >　{{ d.project?.name }}
             </summary>
+            <small v-if="d.shift"
+              >{{ shiftLabel(d.shift) }} · 实际
+              {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
+              {{ labels[d.hours_status] }}</small
+            >
+            <small v-if="d.review"
+              >{{ d.review.reason }} · 核定缺
+              {{ duration(d.review.missing_minutes) }}</small
+            >
             <p>{{ d.holiday }} {{ d.anomalies.join('、') }}</p>
             <small v-if="d.status === 'absent'"
               >{{ d.start.replace('T', ' ') }} 至
               {{ d.end.replace('T', ' ') }}</small
             ><small v-for="p in d.punches" :key="p.id"
               >{{ p.kind === 'in' ? '上班' : '下班' }}
-              {{ p.at.slice(11, 19) }} ·
+              {{ p.at.slice(5, 19).replace('T', ' ') }} ·
               {{ p.matches.map((m: any) => m.name).join(' / ') }}</small
             >
           </details>
@@ -130,7 +158,18 @@ import { get, post } from '@/utils/request'
 import { useAuthStore } from '@/stores/auth'
 const auth = useAuthStore(),
   router = useRouter()
+const shiftLabel = (kind?: string) =>
+  kind === 'night' ? '夜班（晚班）' : kind === 'day' ? '白班（早班）' : '—'
+const duration = (minutes: number) =>
+  Math.floor(minutes / 60) +
+  '小时' +
+  (minutes % 60 ? (minutes % 60) + '分' : '')
 const labels: Record<string, string> = {
+  full: '满勤',
+  normal: '满勤（经理认定）',
+  shortage: '已确认缺工时',
+  pending_hours: '工时异常 · 待审批',
+  in_progress: '班次结算前',
   present: '已打卡',
   conflict: '项目异常 · 待确认',
   waiting: '今日未打卡',
@@ -158,7 +197,11 @@ const ctx = ref<any>({}),
   error = ref('')
 const manager = computed(() => auth.roles.includes('aftersales_manager')),
   nextKind = computed(() =>
-    currentDay.value?.punches.at(-1)?.kind === 'in' ? 'out' : 'in',
+    ctx.value.shifts
+      ? ctx.value.next_kind
+      : currentDay.value?.punches.at(-1)?.kind === 'in'
+        ? 'out'
+        : 'in',
   )
 const oldRows = ref<any[]>()
 const history = () =>
@@ -207,7 +250,28 @@ async function action(fn: () => Promise<unknown>) {
     busy.value = false
   }
 }
-async function punch() {
+const shiftDialog = ref<HTMLDialogElement>(),
+  feedback = ref('')
+async function startPunch() {
+  if (busy.value) return
+  busy.value = true
+  try {
+    ctx.value = await get('/monthly/context')
+  } catch {
+    error.value = '读取当前班次失败，请重试'
+    return
+  } finally {
+    busy.value = false
+  }
+  if (ctx.value.shifts && nextKind.value === 'in' && !ctx.value.shift)
+    shiftDialog.value?.showModal()
+  else punch()
+}
+function chooseShift(shift: string) {
+  shiftDialog.value?.close()
+  punch(shift)
+}
+async function punch(shift?: string, day = ctx.value.day) {
   await action(async () => {
     if (ctx.value.photo && !photo.value) throw Error('请先拍摄打卡照片')
     if (!navigator.geolocation) throw Error('浏览器未提供定位，请检查位置权限')
@@ -231,13 +295,32 @@ async function punch() {
       data.append('file', photo.value)
       url = (await post('/upload?category=attendance', data)).url
     }
-    await post('/monthly/punch', {
+    const kind = nextKind.value
+    const result = await post('/monthly/punch', {
       latitude,
       longitude,
       photo: url,
       request_key: crypto.randomUUID(),
-      kind: nextKind.value,
+      kind,
+      shift,
+      attendance_day: day,
     })
+    feedback.value = '打卡成功'
+    if (ctx.value.shifts && kind === 'out') {
+      const report = await get('/monthly/me', {
+        month: result.day.slice(0, 7) + '-01',
+      })
+      const row = report[0]?.days.find((d: any) => d.day === result.day)
+      if (row)
+        feedback.value +=
+          ' · ' +
+          result.day +
+          ' ' +
+          shiftLabel(row.shift) +
+          (row.remaining_minutes
+            ? '，距 12 小时还差 ' + duration(row.remaining_minutes)
+            : '，已满 12 小时')
+    }
     photo.value = undefined
   })
 }
@@ -303,6 +386,8 @@ input {
   margin-top: 12px;
   width: 100%;
 }
+.full,
+.normal,
 .present {
   color: #166637;
 }
@@ -314,6 +399,8 @@ input {
 p[role='alert'] {
   color: #a02127;
 }
+.pending_hours,
+.shortage,
 .conflict {
   color: #933f06;
 }

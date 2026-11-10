@@ -39,7 +39,8 @@
           <tr>
             <th>员工</th>
             <th>当日状态</th>
-            <th>项目 / 打卡时间</th>
+            <th>班次 / 实际工时</th>
+            <th>项目 / 上下班卡</th>
             <th>本月已休</th>
             <th>本月缺勤</th>
             <th></th>
@@ -56,21 +57,61 @@
               }}</span
               ><small
                 >{{ r.day.anomalies.join('、') }}
-                {{ requestText(r.day) }}</small
+                {{ requestText(r.day) }}
+                <template
+                  v-if="
+                    r.day.hours_status === 'pending_hours' &&
+                    r.day.suggested_minutes != null
+                  "
+                >
+                  · 建议缺 {{ duration(r.day.suggested_minutes) }}</template
+                >
+                <template v-if="r.day.review?.missing_minutes">
+                  · 已确认缺
+                  {{ duration(r.day.review.missing_minutes) }}</template
+                >
+                <template
+                  v-if="
+                    r.day.status !== 'conflict' &&
+                    !r.day.project &&
+                    r.day.projects.length > 1
+                  "
+                >
+                  · 项目待确认</template
+                ></small
               >
             </td>
-            <td :class="{ projectGreen: r.day.status === 'present' }">
+            <td>
+              {{ shiftLabel(r.day.shift)
+              }}<small v-if="r.day.shift">{{
+                duration(Math.floor(r.day.worked_seconds / 60))
+              }}</small>
+            </td>
+            <td :class="{ projectGreen: !!r.day.project }">
               {{
                 r.day.project?.name ||
                 r.day.projects.map((p: any) => p.name).join(' / ') ||
                 '—'
               }}<small>{{
-                r.day.punches.map((p: any) => p.at.slice(11, 16)).join(' · ')
+                r.day.punches
+                  .map(
+                    (p: any) =>
+                      (p.kind === 'in' ? '上 ' : '下 ') +
+                      p.at.slice(5, 16).replace('T', ' '),
+                  )
+                  .join(' · ')
               }}</small>
             </td>
             <td>{{ r.rest_used }} / 4 天</td>
             <td>{{ r.absence_days }} 天</td>
-            <td><button @click="selected = r.employee_id">月明细</button></td>
+            <td>
+              <button
+                v-if="r.day.hours_status === 'pending_hours'"
+                @click="openReview(r, r.day)"
+              >
+                审批工时</button
+              ><button @click="selected = r.employee_id">月明细</button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -80,11 +121,32 @@
           <h2>{{ detail.name }} · {{ date.slice(0, 7) }}</h2>
           <button @click="selected = 0">收起</button>
         </header>
+        <p>
+          本月满勤 {{ detail.full_days }} 天 · 已确认缺工时
+          {{ detail.shortage_days }} 天，共
+          {{ duration(detail.shortage_minutes) }}
+        </p>
         <div v-for="d in [...detail.days].reverse()" :key="d.day" class="entry">
           <strong>{{ d.day }}</strong>
           <span class="pill" :class="d.status">{{ labels[d.status] }}</span>
           {{ d.project?.name || d.holiday }} {{ d.anomalies.join('、') }}
           {{ requestText(d) }}
+          <small v-if="d.shift"
+            >{{ shiftLabel(d.shift) }} · 实际
+            {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
+            {{ labels[d.hours_status] }}</small
+          >
+          <small v-if="d.review"
+            >{{ d.review.reason }} · 核定缺
+            {{ duration(d.review.missing_minutes) }} ·
+            {{ fmt(d.review.at) }}</small
+          >
+          <button
+            v-if="d.hours_status === 'pending_hours'"
+            @click="openReview(detail, d)"
+          >
+            审批工时
+          </button>
           <small v-if="d.status === 'absent'"
             >缺勤时段 {{ fmt(d.start) }} 至 {{ fmt(d.end) }}</small
           >
@@ -98,7 +160,7 @@
               >照片</a
             ></small
           >
-          <div v-if="d.status === 'conflict'">
+          <div v-if="!d.project && d.projects.length > 1">
             确认当日唯一项目
             <button
               v-for="p in d.projects"
@@ -112,6 +174,59 @@
         </div>
       </article>
     </template>
+    <template v-if="tab === '工时审批'">
+      <label
+        >考勤月份
+        <input type="month" :value="date.slice(0, 7)" @change="changeMonth"
+      /></label>
+      <p v-if="!pendingHours.length">本月没有待审批工时。</p>
+      <article v-for="{ r, d } in pendingHours" :key="d.punches.at(-1).id">
+        {{ r.name }} · {{ d.day }} · {{ shiftLabel(d.shift) }} · 实际
+        {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
+        {{ d.anomalies.join('、') }}
+        <button @click="openReview(r, d)">审批工时</button>
+      </article>
+    </template>
+    <dialog ref="reviewDialog" @close="reviewing = null">
+      <form v-if="reviewing" @submit.prevent="submitHours">
+        <h2>{{ reviewing.name }} · 工时审批</h2>
+        <span
+          >{{ reviewing.d.day }} · {{ shiftLabel(reviewing.d.shift) }} · 实际
+          {{ duration(Math.floor(reviewing.d.worked_seconds / 60)) }}</span
+        >
+        <span
+          >{{ reviewing.d.anomalies.join('、') }} ·
+          {{
+            reviewing.d.suggested_minutes == null
+              ? '缺卡，请核定实际差额'
+              : '建议缺 ' + duration(reviewing.d.suggested_minutes)
+          }}</span
+        >
+        <label
+          >审批结果
+          <select v-model="outcome" required>
+            <option disabled value="">请选择</option>
+            <option value="normal">认定正常</option>
+            <option value="shortage">确认缺工时</option>
+          </select></label
+        >
+        <label v-if="outcome === 'shortage'"
+          >核定缺工时（分钟）<input
+            v-model.number="missing"
+            type="number"
+            min="1"
+            max="720"
+            step="1"
+            required
+        /></label>
+        <label
+          >审批原因 <input v-model.trim="reviewReason" required maxlength="500"
+        /></label>
+        <p v-if="error" role="alert">{{ error }}</p>
+        <button :disabled="busy">确认审批</button
+        ><button type="button" @click="reviewDialog?.close()">取消</button>
+      </form>
+    </dialog>
     <template v-if="tab === '额外休息审批'"
       ><p v-if="!requests.length">暂无额外休息申请。</p>
       <article v-for="r in requests" :key="r.id">
@@ -133,21 +248,13 @@
     <template v-if="tab === '统一规则'"
       ><form @submit.prevent="saveRule">
         <label
-          >生效日期
-          <input type="date" required v-model="form.effective" /></label
-        ><label
-          >每日应出勤小时
-          <input
-            type="number"
-            required
-            min="0.1"
-            max="24"
-            step="0.1"
-            v-model.number="hours" /></label
-        ><label
-          >每日交界时间（北京时间）
-          <input type="time" required v-model="cutoff" /></label
-        ><label
+          >生效日期 <input type="date" required v-model="form.effective"
+        /></label>
+        <p>
+          白班、夜班每日应出勤 12 小时。白班在当日结束时结算，夜班在首次上班后
+          24 小时结算。
+        </p>
+        <label
           ><input type="checkbox" v-model="form.photo" /> 打卡必须拍照</label
         ><button :disabled="busy">保存规则</button>
       </form>
@@ -266,9 +373,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { get, post, put, buildProtectedFileUrl } from '@/utils/request'
-const tabs = ['每日考勤', '额外休息审批', '统一规则', '项目地点', '历史记录'],
+const tabs = [
+    '每日考勤',
+    '工时审批',
+    '额外休息审批',
+    '统一规则',
+    '项目地点',
+    '历史记录',
+  ],
   tab = ref(tabs[0])
 const labels: Record<string, string> = {
+  full: '满勤',
+  normal: '满勤（经理认定）',
+  shortage: '已确认缺工时',
+  pending_hours: '工时异常 · 待审批',
+  in_progress: '班次结算前',
   present: '已打卡',
   conflict: '项目异常',
   waiting: '今日未打卡',
@@ -279,6 +398,12 @@ const labels: Record<string, string> = {
   trip: '全天出差',
   leave: '已批请假',
 }
+const shiftLabel = (kind?: string) =>
+  kind === 'night' ? '夜班（晚班）' : kind === 'day' ? '白班（早班）' : '—'
+const duration = (minutes: number) =>
+  Math.floor(minutes / 60) +
+  '小时' +
+  (minutes % 60 ? (minutes % 60) + '分' : '')
 const states: Record<string, string> = {
   pending: '待审批',
   approved: '已批准',
@@ -298,9 +423,44 @@ const date = ref(today),
   notes = ref<Record<number, string>>({}),
   placeQuery = ref(''),
   editing = ref<any>(null)
-const form = ref({ effective: today, photo: false }),
-  hours = ref(8),
-  cutoff = ref('00:00')
+const form = ref({ effective: today, photo: false })
+const pendingHours = computed(() =>
+  rows.value.flatMap((r) =>
+    r.days
+      .filter((d: any) => d.hours_status === 'pending_hours')
+      .map((d: any) => ({ r, d })),
+  ),
+)
+function changeMonth(e: Event) {
+  const month = (e.target as HTMLInputElement).value
+  if (month) {
+    date.value = month + '-01'
+    load()
+  }
+}
+const reviewDialog = ref<HTMLDialogElement>(),
+  reviewing = ref<any>(),
+  outcome = ref(''),
+  missing = ref<number | null>(null),
+  reviewReason = ref('')
+function openReview(r: any, d: any) {
+  reviewing.value = { name: r.name, d }
+  outcome.value = ''
+  missing.value = d.suggested_minutes
+  reviewReason.value = ''
+  error.value = ''
+  reviewDialog.value?.showModal()
+}
+const submitHours = () =>
+  write(async () => {
+    await post('/monthly/hours/review', {
+      punch_id: reviewing.value.d.punches.at(-1).id,
+      outcome: outcome.value,
+      missing_minutes: outcome.value === 'shortage' ? missing.value : 0,
+      reason: reviewReason.value,
+    })
+    reviewDialog.value?.close()
+  })
 const filteredPlaces = computed(() =>
   places.value.filter((p) => (p.code + p.name).includes(placeQuery.value)),
 )
@@ -396,9 +556,8 @@ const saveRule = () =>
   write(() =>
     post('/monthly/policy', {
       ...form.value,
-      minutes: Math.round(hours.value * 60),
-      cutoff:
-        Number(cutoff.value.slice(0, 2)) * 60 + Number(cutoff.value.slice(3)),
+      minutes: 720,
+      cutoff: 0,
     }),
   )
 const savePlace = () =>
@@ -412,7 +571,11 @@ const savePlace = () =>
 onMounted(async () => {
   try {
     ctx.value = await get('/monthly/context')
-    date.value = ctx.value.day
+    const requested = new URLSearchParams(location.search).get('date')
+    date.value =
+      requested && /^\d{4}-\d{2}-\d{2}$/.test(requested)
+        ? requested
+        : ctx.value.day
   } catch {}
   await load()
 })
@@ -484,6 +647,8 @@ small {
   color: #166637;
   font-weight: 600;
 }
+.full,
+.normal,
 .present {
   background: #d6f2df;
   color: #16542f;
@@ -497,6 +662,8 @@ small {
   background: #ffd7d5;
   color: #95171e;
 }
+.pending_hours,
+.shortage,
 .conflict {
   background: #ffe2c1;
   color: #803d0b;

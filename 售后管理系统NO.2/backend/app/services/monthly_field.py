@@ -15,11 +15,14 @@ from app.models.monthly_field import (
     MonthlyAbsence,
     MonthlyEligibility,
     MonthlyPolicy,
+    MonthlyShift,
+    MonthlyHoursReview,
     MonthlyPunch,
     MonthlyRest,
     ProjectConfirmation,
     ProjectRadius,
 )
+from app.services.monthly_shifts import evaluate
 from app.services.field_roles import aftersales_person_ids
 from app.services.legal_holidays import LegalHolidayService
 
@@ -266,6 +269,17 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
         scope(MonthlyPunch).order_by(MonthlyPunch.at, MonthlyPunch.id)
     ):
         punches[p.employee_id, p.day].append(p)
+    shifts = {(s.employee_id, s.day): s for s in await db.scalars(scope(MonthlyShift))}
+    hours_reviews = {
+        r.punch_id: r
+        for r in await db.scalars(
+            select(MonthlyHoursReview).where(
+                MonthlyHoursReview.punch_id.in_(
+                    scope(MonthlyPunch).with_only_columns(MonthlyPunch.id)
+                )
+            )
+        )
+    }
     rests = {(r.employee_id, r.day): r for r in await db.scalars(scope(MonthlyRest))}
     confirmations = {
         r.punch_id: r
@@ -350,6 +364,13 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
                 and not (holidays.get(day) or key in trips)
             ):
                 row["status"] = "leave"
+            if shift := shifts.get(key):
+                row.update(evaluate(shift, logs, stamp, hours_reviews.get(logs[-1].id)))
+                if row["project"] or row["hours_status"] in {
+                    "pending_hours",
+                    "shortage",
+                }:
+                    row["status"] = row["hours_status"]
             used += row["status"] == "rest"
             absent += row["status"] == "absent"
             if persist:
@@ -382,6 +403,17 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
                     name=person.name,
                     rest_used=used,
                     absence_days=absent,
+                    full_days=sum(
+                        r.get("hours_status") in {"full", "normal"} for r in days
+                    ),
+                    shortage_days=sum(
+                        r.get("hours_status") == "shortage" for r in days
+                    ),
+                    shortage_minutes=sum(
+                        r["review"]["missing_minutes"]
+                        for r in days
+                        if r.get("hours_status") == "shortage"
+                    ),
                     days=days,
                 )
             )

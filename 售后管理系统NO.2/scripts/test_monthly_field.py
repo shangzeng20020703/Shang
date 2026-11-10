@@ -26,7 +26,7 @@ from app.models.employee import Employee
 from app.models.employee_role import EmployeeRole
 from app.models.attendance import AttendanceEffect
 from app.models.field_service import FieldProject, FieldProjectCatalog, FieldFile
-from app.models.monthly_field import MonthlyAbsence
+from app.models.monthly_field import MonthlyAbsence, MonthlyPolicy
 from app.services import monthly_field as service
 
 
@@ -108,7 +108,16 @@ async def main():
 
         policy = dict(effective="2030-03-01", cutoff=240, minutes=480, photo=True)
         await req("POST", "/monthly/policy", "017", 403, json=policy)
-        await req("POST", "/monthly/policy", json=policy)
+        # Existing version-17 rule retains its 04:00 cutoff and 8-hour target.
+        async with async_session() as db:
+            db.add(MonthlyPolicy(**{**policy, "effective": date(2030, 3, 1)}))
+            await db.commit()
+        await req(
+            "POST",
+            "/monthly/policy",
+            expected=422,
+            json={**policy, "effective": "2030-04-01"},
+        )
         for who in ("001", "017"):
             await req(
                 "POST",
@@ -231,6 +240,101 @@ async def main():
             assert not (
                 await db.get(MonthlyAbsence, (ids["001"], date(2030, 3, 5)))
             ).active
+
+        await req(
+            "POST",
+            "/monthly/policy",
+            json=dict(effective="2030-04-03", minutes=720, cutoff=0, photo=True),
+        )
+        clock = datetime(2030, 4, 3, 8)
+        await hit("in", 40, 422)
+        await hit("in", 40, shift="day")
+        clock = datetime(2030, 4, 3, 14)
+        await hit("out", 40)
+        clock = datetime(2030, 4, 3, 15)
+        await hit("in", 40, 409, shift="night")
+        await hit("in", 40)
+        clock = datetime(2030, 4, 3, 21)
+        await hit("out", 40)
+        assert (await own("2030-04-01"))["days"][-1]["hours_status"] == "full"
+        clock = datetime(2030, 4, 4, 8)
+        await hit("in", 40, shift="day")
+        clock = datetime(2030, 4, 4, 19, 59)
+        short = await hit("out", 40)
+        decision = dict(
+            punch_id=short["id"],
+            outcome="shortage",
+            missing_minutes=1,
+            reason="核对工时",
+        )
+        await req("POST", "/monthly/hours/review", expected=409, json=decision)
+        clock = datetime(2030, 4, 5)
+        row = (await own("2030-04-01"))["days"][-2]
+        assert row["status"] == "pending_hours" and row["suggested_minutes"] == 1
+        await req("POST", "/monthly/hours/review", "017", 403, json=decision)
+        await req("POST", "/monthly/hours/review", json=decision)
+        await req("POST", "/monthly/hours/review", expected=409, json=decision)
+        april = await own("2030-04-01")
+        assert april["shortage_days"] == april["shortage_minutes"] == 1
+        clock = datetime(2030, 4, 29, 20)
+        first = await hit("in", 40, shift="night")
+        clock = datetime(2030, 4, 30, 19, 59)
+        assert (await req("GET", "/monthly/context", "001"))["next_kind"] == "out"
+        clock = datetime(2030, 4, 30, 20)
+        row = (await own("2030-04-01"))["days"][-2]
+        assert row["status"] == "pending_hours" and row["suggested_minutes"] is None
+        await req(
+            "POST",
+            "/monthly/hours/review",
+            json=dict(
+                punch_id=first["id"],
+                outcome="normal",
+                missing_minutes=0,
+                reason="现场核实满勤",
+            ),
+        )
+        await hit("in", 40, shift="night")
+        clock = datetime(2030, 5, 1, 6)
+        ctx = await req("GET", "/monthly/context", "001")
+        assert ctx["day"] == "2030-04-30" and ctx["next_kind"] == "out"
+        assert (await hit("out", 40))["day"] == "2030-04-30"
+        assert (await req("GET", "/monthly/context", "001"))[
+            "resume_night_day"
+        ] == "2030-04-30"
+        await hit("in", 40, attendance_day="2030-04-30")
+        clock = datetime(2030, 5, 1, 8)
+        await hit("out", 40)
+        april = await own("2030-04-01")
+        assert april["full_days"] == 3 and april["days"][-1]["worked_seconds"] == 43200
+        assert (
+            april["days"][-2]["status"] == "normal"
+            and april["days"][-2]["worked_seconds"] == 0
+        )
+        assert (await own("2030-05-01"))["days"][-1]["status"] == "waiting"
+        clock = datetime(2030, 5, 1, 20)
+        assert (await hit("in", 40, shift="night"))["day"] == "2030-05-01"
+        clock = datetime(2030, 5, 2, 8)
+        assert (await hit("out", 40))["day"] == "2030-05-01"
+        clock = datetime(2030, 5, 3, 1)
+        may = await own("2030-05-01")
+        assert [r["status"] for r in may["days"][:2]] == ["full", "rest"]
+        clock = datetime(2030, 5, 3, 7)
+        await hit("in", 39, shift="night")
+        clock = datetime(2030, 5, 3, 19)
+        same_day = await hit("out", 39)
+        clock = datetime(2030, 5, 4, 8)
+        row = (await own("2030-05-01"))["days"][-2]
+        assert not row["project"] and row["anomalies"] == ["打卡日期与班次不符"]
+        await req(
+            "POST", "/monthly/confirm", json={"punch_id": same_day["id"], "code": "A"}
+        )
+        assert (await own("2030-05-01"))["days"][-2]["status"] == "pending_hours"
+        clock = datetime(2030, 5, 4, 15)
+        await hit("in", 40, shift="day")
+        clock = datetime(2030, 5, 5, 3)
+        await hit("out", 40, 409, attendance_day="2030-05-04")
+        row = (await own("2030-05-01"))["days"][-2]
+        assert row["status"] == "pending_hours" and row["worked_seconds"] == 0
     await engine.dispose()
     print(
         "NO.2 monthly attendance, permissions, GPS, overnight, approvals and settlement passed"

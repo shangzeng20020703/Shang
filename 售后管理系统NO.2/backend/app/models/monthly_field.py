@@ -11,6 +11,7 @@ class MonthlyPolicy(Base):
     effective: Mapped[date] = mapped_column(Date, primary_key=True)
     cutoff: Mapped[int]
     minutes: Mapped[int]
+    shifts: Mapped[bool] = mapped_column(default=False, server_default="0")
     photo: Mapped[bool]
 
 
@@ -82,3 +83,26 @@ class MonthlyEligibility(Base):
     )
     day: Mapped[date] = mapped_column(Date, primary_key=True)
     eligible: Mapped[bool]
+
+
+class MonthlyShift(Base):
+    __tablename__ = "field_monthly_shifts"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(5))
+    started: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MonthlyHoursReview(Base):
+    __tablename__ = "field_monthly_hours_reviews"
+    # A decision covers this exact sequence of immutable punches.
+    punch_id: Mapped[int] = mapped_column(
+        ForeignKey("field_monthly_punches.id"), primary_key=True
+    )
+    outcome: Mapped[str] = mapped_column(String(12))
+    missing_minutes: Mapped[int]
+    reason: Mapped[str] = mapped_column(String(500))
+    manager_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    at: Mapped[datetime] = mapped_column(DateTime)
