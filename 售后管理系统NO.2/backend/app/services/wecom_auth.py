@@ -145,7 +145,11 @@ async def complete(db, client, state, verifier, code):
         raise HTTPException(403, "未绑定有效在职花名册账号，请联系售后负责人")
     if client == "web":
         from app.core.deps import get_user_role_names
-        if not await get_user_role_names(db, user) & {"admin", "hr", "manager", "regional_lead", "aftersales_manager"}:
+        from app.services.monthly_field import active
+        roles = await get_user_role_names(db, user)
+        if not roles & {'admin', 'aftersales_manager'} and await active(db):
+            raise HTTPException(403, '请使用员工入口')
+        if not roles & {"admin", "hr", "manager", "regional_lead", "aftersales_manager"}:
             from app.models.field_service import FieldProject
             if not await db.scalar(select(FieldProject.id).where(FieldProject.manager_id == user.id).limit(1)):
                 raise HTTPException(403, "当前账号未开通管理端权限，请使用员工端入口")

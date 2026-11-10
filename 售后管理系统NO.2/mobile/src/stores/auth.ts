@@ -37,6 +37,7 @@ interface RoleRecord {
 export const useAuthStore = defineStore('mobile-auth', () => {
   const token = ref(getMobileAuthToken())
   const user = ref<UserInfo | null>(null)
+  const monthly = ref(false)
   const loading = ref(false)
 
   const isLoggedIn = computed(() => Boolean(token.value))
@@ -81,6 +82,9 @@ export const useAuthStore = defineStore('mobile-auth', () => {
     }
 
     // 管理员沿用原移动工作台的管理入口，权限仍由后端校验。
+    const context = await get('/monthly/context')
+    monthly.value = context.active && (context.field_employee || context.manager)
+    if (monthly.value && !context.manager) roleNames = ['employee']
     const normalizedRoles: AppRole[] = profile.is_superuser ? ['admin'] : roleNames
     user.value = {
       ...profile,
@@ -93,6 +97,7 @@ export const useAuthStore = defineStore('mobile-auth', () => {
 
   function logout() {
     // 移动端只清自己的 token，不碰 Web 端的登录态。
+    monthly.value = false
     token.value = ''
     user.value = null
     clearMobileAuthToken()
@@ -101,6 +106,7 @@ export const useAuthStore = defineStore('mobile-auth', () => {
   return {
     token,
     user,
+    monthly,
     loading,
     isLoggedIn,
     roles,

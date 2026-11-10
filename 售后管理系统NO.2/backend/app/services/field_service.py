@@ -845,6 +845,9 @@ async def list_people(db, user):
 
 
 async def save_person(db, user, data, item_id=None):
+    from app.services.monthly_field import active
+    if (data.role == 'regional_lead' or data.field_staff_category == 'leader_candidate') and await active(db):
+        raise HTTPException(422, '月度考勤人员请选择员工或售后经理')
     from app.services.field_roles import role_names
     operator_roles = await role_names(db, user)
     if not operator_roles & {"admin", "hr", "aftersales_manager"}:
@@ -870,7 +873,11 @@ async def save_person(db, user, data, item_id=None):
     if item_id and not row:
         raise HTTPException(404, "人员不存在")
     existing_roles = await role_names(db, row) if row else set()
-    if row and data.field_staff_category == "member" and "field_staff_category" in data.model_fields_set:
+    from app.services.field_roles import is_aftersales_person
+    was_eligible = bool(row and row.is_active and row.status in {'在职','试用'} and
+                        not existing_roles & {'admin','aftersales_manager'} and await is_aftersales_person(db,row.id))
+
+    if row and not await active(db) and data.field_staff_category == "member" and "field_staff_category" in data.model_fields_set:
         if await db.scalar(select(FieldProject.id).where(FieldProject.manager_id == row.id).limit(1)):
             raise HTTPException(409, "已任命的项目组长不能归类为组员，请先调整项目组长")
     if row and row.id == user.id and (not data.is_active or data.role not in existing_roles):
@@ -939,6 +946,8 @@ async def save_person(db, user, data, item_id=None):
             profile.details = details
         elif details:
             db.add(FieldRosterProfile(employee_id=row.id, details=details))
+    from app.services.monthly_field import eligibility_change
+    await eligibility_change(db,row,was_eligible,bool(row.is_active and data.role=='employee' and row.is_field_staff))
     if not row.is_active:
         await stop_person(db, row.id)
     await bind_member(db, row.id, data.wecom_userid)

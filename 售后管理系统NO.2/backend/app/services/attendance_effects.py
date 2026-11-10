@@ -351,11 +351,7 @@ async def _build_overtime_effects(
     return _build_generic_period_effects(event, payload, binding, "overtime", "overtime_pay")
 
 
-def _build_business_trip_effects(
-    event: BusinessEventOutbox,
-    payload: dict[str, Any],
-    binding: dict[str, Any],
-) -> list[dict[str, Any]]:
+def trip_period(payload, binding):
     form_data = _form_data(payload)
     start_at = _mapped_datetime(
         form_data,
@@ -378,6 +374,23 @@ def _build_business_trip_effects(
             end_at = _parse_datetime_like(
                 duration_value.get("end") or duration_value.get("end_time") or duration_value.get("end_date")
             )
+    return start_at, end_at
+
+
+def trip_covers_date(start, end, day):
+    if not start or not end or not start.date() <= day <= end.date():
+        return False
+    return ((start.time() == time.min and end.time() == time.min)
+            or (start <= _day_start(day) and end >= _day_end(day)))
+
+
+def _build_business_trip_effects(
+    event: BusinessEventOutbox,
+    payload: dict[str, Any],
+    binding: dict[str, Any],
+) -> list[dict[str, Any]]:
+    form_data = _form_data(payload)
+    start_at, end_at = trip_period(payload, binding)
     employee_id = _safe_int(payload.get("applicant_id"))
     if not (employee_id and start_at and end_at):
         return []
@@ -393,7 +406,8 @@ def _build_business_trip_effects(
             minutes=480,
             pay_policy="paid",
             attendance_status=AttendanceStatus.business_trip.value,
-            payload_extra={"trip_location": form_data.get("trip_location")},
+            payload_extra={"trip_location": form_data.get("trip_location"),
+                           "full_day": trip_covers_date(start_at, end_at, current)},
         )
         for current in _date_range(start_at.date(), end_at.date())
     ]

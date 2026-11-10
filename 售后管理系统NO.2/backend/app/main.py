@@ -41,7 +41,11 @@ async def dispatch_loop():
                 await db.commit()
             await process_recalculation()
             async with async_session() as db:
-                await settle_due_rest(db)
+                from app.services.monthly_field import active, settle_closed_months
+                if await active(db):
+                    await settle_closed_months(db)
+                else:
+                    await settle_due_rest(db)
                 await db.commit()
         except asyncio.CancelledError:
             raise
@@ -54,8 +58,8 @@ async def dispatch_loop():
 async def lifespan(app):
     # Schema changes are explicit via bootstrap; startup verifies the baseline exists.
     async with async_session() as db:
-        if not await db.get(FieldSchemaVersion, 16):
-            raise RuntimeError("Run python -m app.bootstrap to apply schema version 16 first")
+        if not await db.get(FieldSchemaVersion, 17):
+            raise RuntimeError("Run python -m app.bootstrap to apply schema version 17 first")
     worker = asyncio.create_task(dispatch_loop()) if settings.BACKGROUND_JOBS else None
     yield
     if worker:
@@ -129,7 +133,13 @@ async def download(file_path: str, request: Request, db=Depends(get_db)):
     if not row:
         raise HTTPException(404, "文件不存在")
     allowed = user.id == row.owner_id or await is_admin(db, user)
-    if not allowed and file_path.startswith("attendance/"):
+    from app.services.monthly_field import active
+    from app.services.field_roles import is_aftersales_manager, is_aftersales_person
+    monthly_mode = await active(db) if file_path.startswith("attendance/") else False
+    if monthly_mode:
+        allowed = user.id == row.owner_id or (
+            await is_aftersales_manager(db, user) and await is_aftersales_person(db,row.owner_id))
+    if not allowed and not monthly_mode and file_path.startswith("attendance/"):
         allowed = bool(
             await db.scalar(
                 select(FieldAssignment.id)

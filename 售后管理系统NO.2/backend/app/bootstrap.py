@@ -6,6 +6,7 @@ from sqlalchemy import inspect, select, update
 from app.core.database import Base, engine, async_session
 from app.core.config import settings
 import app.models
+import app.models.monthly_field
 import app.models.field_service
 from app.models.field_service import FieldProject, FieldProjectCatalog, FieldSchemaVersion
 from app.models.employee import Employee
@@ -184,7 +185,7 @@ async def initialize():
                                     customer_id=None, manager_id=None))
                 existing_codes.add(row.code)
         await db.flush()
-        for version in range(1, 17):
+        for version in range(1, 18):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

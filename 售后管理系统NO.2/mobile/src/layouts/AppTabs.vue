@@ -57,6 +57,7 @@ const inbox = useMobileInbox(
 )
 const hideGlobalTabbar = computed(() => {
   return [
+    '/app/monthly',
     '/app/attendance',
     '/app/leave',
     '/app/approval/start',

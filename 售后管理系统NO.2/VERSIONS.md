@@ -6,7 +6,8 @@ NO.2 从私有仓库提交 `2c7a2e0ff5e128417311b1443e05e5e69a488b30` 独立起�
 
 | 版本 | 私有提交 | 校验清单 | 说明 |
 |---|---|---|---|
-| [no2-20261110-121118-CST-d08f7d3](versions/no2-20261110-121118-CST-d08f7d3/) | `d08f7d3b3666e398ff5be20735d6c136f3cf8b8f` | [JSON](versions/manifests/no2-20261110-121118-CST-d08f7d3.json) | 当前；NO.2 初始版，仅调整版本说明；未部署服务器 |
+| [no2-20261110-134652-CST-8c9b9b2](versions/no2-20261110-134652-CST-8c9b9b2/) | `8c9b9b21b81736ec66dbf401a40cda702714372f` | [JSON](versions/manifests/no2-20261110-134652-CST-8c9b9b2.json) | 当前；两类角色、月度四天休息与全项目地点打卡 |
+| [no2-20261110-121118-CST-d08f7d3](versions/no2-20261110-121118-CST-d08f7d3/) | `d08f7d3b3666e398ff5be20735d6c136f3cf8b8f` | [JSON](versions/manifests/no2-20261110-121118-CST-d08f7d3.json) | 历史版本；NO.2 初始版，仅调整版本说明；未部署服务器 |
 
 公开副本将账号文档中的两处个人手机号替换为脱敏占位符；目录根部的 `.dockerignore` 另外排除 `versions`。这些差异均写入校验清单。本机演示账号、数据库、附件、密钥、部署配置和镜像不进入源码副本。
 

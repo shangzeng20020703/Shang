@@ -137,6 +137,8 @@ async def get_current_user(
     await validate_session_identity(
         db, user, payload, request.client.host if request.client else None
     )
+    from app.services.monthly_field import enforce_routes
+    await enforce_routes(request, db, user)
     return user
 
 
@@ -171,6 +173,10 @@ async def get_user_role_names(
         for (role_name,) in result.all()
         if str(role_name or "").strip()
     }
+    if 'regional_lead' in roles:
+        from app.services.monthly_field import active
+        if await active(db):
+            roles.discard('regional_lead')
     return roles or {"employee"}
 
 

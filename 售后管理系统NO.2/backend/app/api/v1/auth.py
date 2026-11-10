@@ -180,6 +180,9 @@ async def management_login(
     """
     employee, local_passwordless = await _authenticate_for_login(request, db, data)
     role_names = await get_user_role_names(db, employee)
+    from app.services.monthly_field import active
+    if not role_names & {'admin', 'aftersales_manager'} and await active(db):
+        raise HTTPException(403, '请使用员工入口')
     if not has_management_login_role(role_names) and not await db.scalar(
             select(FieldProject.id).where(FieldProject.manager_id == employee.id).limit(1)):
         raise HTTPException(

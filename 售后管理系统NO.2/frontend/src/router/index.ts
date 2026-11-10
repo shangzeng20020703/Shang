@@ -8,6 +8,7 @@ const rules = ['admin','hr','regional_lead','aftersales_manager']
 const router=createRouter({history:createWebHistory(),routes:[
 {path:'/login',component:()=>import('@/views/LoginView.vue')},
 {path:'/',component:()=>import('@/views/LayoutView.vue'),redirect:'/dashboard',children:[
+{path:'monthly',component:()=>import('@/views/MonthlyField.vue'),meta:{title:'月度考勤',roles:['aftersales_manager']}},
 {path:'dashboard',component:()=>import('@/views/FieldDashboard.vue'),meta:{title:'项目人员看板'}},
 {path:'field',component:()=>import('@/views/FieldView.vue'),meta:{title:'项目库'}},
 {path:'rotation',component:()=>import('@/views/RotationView.vue'),meta:{title:'现场轮休'}},
@@ -28,6 +29,7 @@ router.beforeEach(async to=>{
   if(to.path!=='/login') rememberLoginDestination('web',to.fullPath)
   clearWebAuthSession();return to.path==='/login'?true:'/login'
  }
+ if(getWebAuthRoles().includes('aftersales_manager') && ['/login','/field','/dashboard','/attendance','/rotation'].includes(to.path))return '/monthly'
  if(to.path==='/login')return getWebManagementSnapshotHomePath()
  // Project leaders enter through the project library and can open their project's schedule there.
  if(getWebAuthRoles().includes('project_leader') && !['/field','/rotation'].includes(to.path))return '/field'

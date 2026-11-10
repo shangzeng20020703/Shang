@@ -304,6 +304,10 @@ const canAccessAdmin = computed(() => hasAnyRole('admin'))
 const canAccessFixedAssets = computed(() => hasAnyRole('admin', 'asset_admin'))
 
 const navigationGroups = computed(() => {
+  if (roles.value.includes('aftersales_manager')) return [
+    {title:'考勤管理',items:[{path:'/monthly',label:'员工月度考勤',icon:DataBoard}]},
+    {title:'人员与审批',items:[{path:'/employees',label:'人员花名册',icon:User},{path:'/approval',label:'业务审批',icon:Stamp}]},
+  ]
   if (roles.value.includes('project_leader')) {
     return [
       { title: '工作台', items: [{ path:'/field', label:'项目库', icon:Connection }] },

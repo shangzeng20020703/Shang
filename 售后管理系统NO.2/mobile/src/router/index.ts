@@ -17,6 +17,7 @@ import { get } from '@/utils/request'
 const allMobileRoles: AppRole[] = ['employee', 'manager', 'regional_lead', 'aftersales_manager', 'hr', 'finance', 'asset_admin']
 
 const routes: Array<RouteRecordRaw> = [{path:'/',redirect:'/app/tabs/home'},{path:'/login',component:()=>import('@/pages/LoginPage.vue')},{path:'/app',component:()=>import('@/layouts/AppTabs.vue'),children:[{path:'',redirect:'/app/tabs/home'},
+{path:'monthly',component:()=>import('@/pages/MonthlyAttendance.vue')},
 {path:'tabs/home',component:()=>import('@/pages/HomePage.vue'),meta:{breadcrumb:[{label:'首页'}]}},
 {path:'tabs/workbench',component:()=>import('@/pages/WorkbenchPage.vue'),meta:{breadcrumb:[{label:'工作台'}]}},
 {path:'tabs/approvals',component:()=>import('@/pages/ApprovalsPage.vue'),meta:{breadcrumb:[{label:'审批中心'}]}},
@@ -69,6 +70,7 @@ router.beforeEach(async (to, from) => {
     }
   }
 
+  if (auth.monthly && ['/app/tabs/home','/app/tabs/workbench','/app/rotation','/app/attendance','/app/field','/app/team-attendance','/app/people'].includes(to.path)) return '/app/monthly'
   const requiredRoles = to.meta.roles as AppRole[] | undefined
   if (to.path === '/app/attendance' && (auth.roles.includes('regional_lead') || auth.roles.includes('aftersales_manager'))) {
     return '/app/tabs/home'

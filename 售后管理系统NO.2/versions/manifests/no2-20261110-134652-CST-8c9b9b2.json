@@ -1,0 +1,2047 @@
+{
+  "archived_at": "2026-11-10T13:47:02.987792+08:00",
+  "changes": [
+    "两类角色、月度四天休息与全项目地点打卡"
+  ],
+  "content_sha256": "fd971b16eeae63bbf1e4853394b9eafc75d10c1d4b120d96b7d792a43230f4e3",
+  "content_sha256_format": "UTF-8 lines sorted by path: <mode> <bytes> <sha256> <path>\\n",
+  "file_count": 334,
+  "files": [
+    {
+      "path": ".dockerignore",
+      "mode": "100644",
+      "bytes": 113,
+      "sha256": "d3a0c4d229d800ee3ebb4b499576c1d0286be334c08ae386f7e1205196882c59"
+    },
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "bytes": 356,
+      "sha256": "345cf27c6d8046d8e531f70c60a10a4016c5aa2f0e6465596c6616a411d031a8"
+    },
+    {
+      "path": "AGENTS.md",
+      "mode": "100644",
+      "bytes": 1617,
+      "sha256": "28f35ef90025fa83d672b6acd46e3d6b8f1e6184463d24197421a3f06db103a5"
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "bytes": 16017,
+      "sha256": "9fd3da83fa91c49bfa4f1bda5996b2e6090e5e0f7370033ebae48849b2694cc9"
+    },
+    {
+      "path": "SOURCE.md",
+      "mode": "100644",
+      "bytes": 2122,
+      "sha256": "5121701e36c84d69933a13c3fc3692f3a30fae3ace5c994b43584c6489a70bae"
+    },
+    {
+      "path": "backend/.dockerignore",
+      "mode": "100644",
+      "bytes": 45,
+      "sha256": "a0e3b476370c48e8ef25c17382cf7c034ef44db2ff461ee91d79137a01ca9f4b"
+    },
+    {
+      "path": "backend/.env.example",
+      "mode": "100644",
+      "bytes": 1508,
+      "sha256": "a29e72433e7b39763585f5c66aa9d82ed728c1f8c0f5c6446c9db76e90689794"
+    },
+    {
+      "path": "backend/Dockerfile",
+      "mode": "100644",
+      "bytes": 491,
+      "sha256": "02370aac38d0ae627e1b2c9ce0ccda99dd8f54aa4454e6e095791e11bd8acef4"
+    },
+    {
+      "path": "backend/app/__init__.py",
+      "mode": "100644",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "backend/app/api/__init__.py",
+      "mode": "100644",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "backend/app/api/v1/__init__.py",
+      "mode": "100644",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "backend/app/api/v1/admin.py",
+      "mode": "100644",
+      "bytes": 44116,
+      "sha256": "d5e66c517e7512afbb32e2ce766664cc3716286f3760b88fbff8d3bf413e140f"
+    },
+    {
+      "path": "backend/app/api/v1/admin_announcements.py",
+      "mode": "100644",
+      "bytes": 11328,
+      "sha256": "c1ef6d925205c7d18904da113450baf8ad0412cdff164510f58865fb8c0da2ab"
+    },
+    {
+      "path": "backend/app/api/v1/admin_assets.py",
+      "mode": "100644",
+      "bytes": 25824,
+      "sha256": "ce4eaa9e9d88d50327d5da691f697791a4854774972d44e3e6961ccb9687d00a"
+    },
+    {
+      "path": "backend/app/api/v1/admin_rooms.py",
+      "mode": "100644",
+      "bytes": 12047,
+      "sha256": "5f5fc8c8ab3f8790f51dffe4271648ef66bf4b2b255437dc4d57bf10ce6418cb"
+    },
+    {
+      "path": "backend/app/api/v1/admin_vehicles.py",
+      "mode": "100644",
+      "bytes": 13453,
+      "sha256": "148e028bed1d98b8aae25fc814c221e5abb302f1af68e3c24bcce18daefbcfd1"
+    },
+    {
+      "path": "backend/app/api/v1/admin_visitors.py",
+      "mode": "100644",
+      "bytes": 14172,
+      "sha256": "928161b6ebc92a9352968aecad48ab3127fa4216b3370cc0c8571ef9fc71cd1f"
+    },
+    {
+      "path": "backend/app/api/v1/analytics.py",
+      "mode": "100644",
+      "bytes": 14422,
+      "sha256": "65d06158b8d3a40b0b65fa8a837529cb118a6ac8511f28277563ff4674391231"
+    },
+    {
+      "path": "backend/app/api/v1/approval.py",
+      "mode": "100644",
+      "bytes": 66113,
+      "sha256": "1c3811f8cc6b68bdbff0e3664c6631aecce9b1ce877b3aecf6fb95b1acf92ab8"
+    },
+    {
+      "path": "backend/app/api/v1/attendance.py",
+      "mode": "100644",
+      "bytes": 209341,
+      "sha256": "1bcc8381dfee39d22648f4dda228d5e40ed7806cc0d7a7b947883a50ac2bee4b"
+    },
+    {
+      "path": "backend/app/api/v1/audit_log.py",
+      "mode": "100644",
+      "bytes": 5545,
+      "sha256": "9d23577fd379ba73b9a50ba54c1aabf9c6e3381442e7ad834c33f2d38831a563"
+    },
+    {
+      "path": "backend/app/api/v1/auth.py",
+      "mode": "100644",
+      "bytes": 11701,
+      "sha256": "8b3ef89cf4185e0ecdfef65baf246f4bb6c1931235e1e7290d7f556e9f4c4180"
+    },
+    {
+      "path": "backend/app/api/v1/chat.py",
+      "mode": "100644",
+      "bytes": 32202,
+      "sha256": "d86bb7e61de19aae4f8e21a5aa7a7fa32ce8e83c67889ba5d49fc04bd993a815"
+    },
+    {
+      "path": "backend/app/api/v1/competency.py",
+      "mode": "100644",
+      "bytes": 31647,
+      "sha256": "ed5cd3ae06d5a6a45193575de18d9e2de1502916a8324861e1f446eaff0e2812"
+    },
+    {
+      "path": "backend/app/api/v1/dashboard.py",
+      "mode": "100644",
+      "bytes": 34219,
+      "sha256": "9ce2a2305334217d8c04285a6682289978611f14f845dd31e6eeb0c330ecff5d"
+    },
+    {
+      "path": "backend/app/api/v1/departments.py",
+      "mode": "100644",
+      "bytes": 10448,
+      "sha256": "0b1f4ea94be42c9362423b9b7856bd810c9b4cbcfe2c168bc2ffd3ae449db355"
+    },
+    {
+      "path": "backend/app/api/v1/employees.py",
+      "mode": "100644",
+      "bytes": 58689,
+      "sha256": "a0593026b2cd6715c4db7bd4b1398c341a91feb85ff89b71f53dd5b7ad8918a8"
+    },
+    {
+      "path": "backend/app/api/v1/ess.py",
+      "mode": "100644",
+      "bytes": 21319,
+      "sha256": "5954f517d629692d279e1f9fda1d89c0076f98a33c860db8af2f7caee254f807"
+    },
+    {
+      "path": "backend/app/api/v1/event_monitor.py",
+      "mode": "100644",
+      "bytes": 24454,
+      "sha256": "ed12d00ece2bac93b7027890c3d3e225c2d58dd8d150189be000b9b9abd488b8"
+    },
+    {
+      "path": "backend/app/api/v1/field_service.py",
+      "mode": "100644",
+      "bytes": 16327,
+      "sha256": "5abe32b3bca08a042e42363e4e5057a5b27b82732fe96451222525d69e59a1a7"
+    },
+    {
+      "path": "backend/app/api/v1/headhunter.py",
+      "mode": "100644",
+      "bytes": 17044,
+      "sha256": "f9c6e4a74927c01d64eb2ac83c2fd972900583aa692bbcd1a3d70805c39f4f9b"
+    },
+    {
+      "path": "backend/app/api/v1/leave.py",
+      "mode": "100644",
+      "bytes": 84924,
+      "sha256": "54e0dca3f2ef7c5e25e1f51b7e9c12aed22333e4a0fb004771f55e55698d9af8"
+    },
+    {
+      "path": "backend/app/api/v1/locations.py",
+      "mode": "100644",
+      "bytes": 8043,
+      "sha256": "876799a9a3773780333809b941d5d857aedb1b0ccb45328ba4775b922e52df26"
+    },
+    {
+      "path": "backend/app/api/v1/monthly_field.py",
+      "mode": "100644",
+      "bytes": 13139,
+      "sha256": "a2017caa6e841e30fd91dded49aac0f1007f3a810d79aa5424ac4ec26aac4dfb"
+    },
+    {
+      "path": "backend/app/api/v1/notifications.py",
+      "mode": "100644",
+      "bytes": 8567,
+      "sha256": "fc4806a2f28860a2f8dccde8593a30a87f1e3ddf81826eafa7d0b2aba400d4b4"
+    },
+    {
+      "path": "backend/app/api/v1/organizations.py",
+      "mode": "100644",
+      "bytes": 10026,
+      "sha256": "7915bf8c30249614c9d6fadf7f8d9bb4b44e469f9b6a7852f36b6af9c9ad8466"
+    },
+    {
+      "path": "backend/app/api/v1/overtime.py",
+      "mode": "100644",
+      "bytes": 16411,
+      "sha256": "b9c45e6beb354d587ff82c7382fe3865eba19f6d9ff4315936e551d2f0faad86"
+    },
+    {
+      "path": "backend/app/api/v1/payroll.py",
+      "mode": "100644",
+      "bytes": 93412,
+      "sha256": "7cc1442d618a8b500086d5e24bfddb0c4c2cc72a61d2caaeef6e04c175cf8b9c"
+    },
+    {
+      "path": "backend/app/api/v1/performance.py",
+      "mode": "100644",
+      "bytes": 53728,
+      "sha256": "ec68cc65d17a54742446cf9c2ecba24fae0ad06680aefc89d00c530b828d73c7"
+    },
+    {
+      "path": "backend/app/api/v1/rbac.py",
+      "mode": "100644",
+      "bytes": 9976,
+      "sha256": "b0ebeaa591d5d872852f2adb4b13572dddfe7060b8d0555318fc160a75902cbd"
+    },
+    {
+      "path": "backend/app/api/v1/recruitment.py",
+      "mode": "100644",
+      "bytes": 98939,
+      "sha256": "a32479576f46889e8ba32ca6f6c2f0c629a8dd2a9374fd0f344b09b75e525dd4"
+    },
+    {
+      "path": "backend/app/api/v1/rotation.py",
+      "mode": "100644",
+      "bytes": 5291,
+      "sha256": "d46919e9a81c2993748777a18c64c4adc3620c133afb3047d3086454c1ed7659"
+    },
+    {
+      "path": "backend/app/api/v1/router.py",
+      "mode": "100644",
+      "bytes": 1885,
+      "sha256": "03e9e49b5a409350dae8bf71be3611206c34600d9b5cbc9fcb5c9193ed0bfeb8"
+    },
+    {
+      "path": "backend/app/api/v1/system_settings.py",
+      "mode": "100644",
+      "bytes": 2727,
+      "sha256": "9cf855a2f745234ce9f59f519c0e72b7bd066f594facf165950e24260b6d7cad"
+    },
+    {
+      "path": "backend/app/api/v1/talent_development.py",
+      "mode": "100644",
+      "bytes": 36505,
+      "sha256": "8023fe0dc7c0dce66140384e49d21cb377db471a4b44d3470794f7f3f610a2db"
+    },
+    {
+      "path": "backend/app/api/v1/talent_profile.py",
+      "mode": "100644",
+      "bytes": 10991,
+      "sha256": "17beda9a0ca182e45931dfe9c9ffc85b7828f42f354501766e838a2228966980"
+    },
+    {
+      "path": "backend/app/api/v1/talent_review.py",
+      "mode": "100644",
+      "bytes": 34604,
+      "sha256": "6f1c991bcde81999d681a4261e1125b45a324f8809441ece0f8ff92b5e031ae5"
+    },
+    {
+      "path": "backend/app/api/v1/training.py",
+      "mode": "100644",
+      "bytes": 59108,
+      "sha256": "2455d8c8d9301df5e7c9f319d5957a8e1265840804de89956e2f5c6994ebcc10"
+    },
+    {
+      "path": "backend/app/api/v1/upload.py",
+      "mode": "100644",
+      "bytes": 8252,
+      "sha256": "3c889aed3976e7d832c101743df3526b7619b6dc99d81f62ccf7ae7c9cab6628"
+    },
+    {
+      "path": "backend/app/api/v1/vendors.py",
+      "mode": "100644",
+      "bytes": 44572,
+      "sha256": "6246ba5c910f729f37d641860a509b239bc1ef83028ad40866b665a9cba0cf8d"
+    },
+    {
+      "path": "backend/app/api/v1/wecom_auth.py",
+      "mode": "100644",
+      "bytes": 1434,
+      "sha256": "0bc3e9b41e59d24cf1454137e02f67ab592257e63089f9cd8822ded86aeb8ce5"
+    },
+    {
+      "path": "backend/app/bootstrap.py",
+      "mode": "100644",
+      "bytes": 23144,
+      "sha256": "d469ecf850c85824d89adc5696f26a2ae1b1f9f73c3f7da224765f27cf482d2c"
+    },
+    {
+      "path": "backend/app/core/__init__.py",
+      "mode": "100644",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "backend/app/core/config.py",
+      "mode": "100644",
+      "bytes": 5114,
+      "sha256": "ff94cd3276ebcf911f5fdd38a61a4a5914042a3143ff6d2dec8bd950307f22ba"
+    },
+    {
+      "path": "backend/app/core/database.py",
+      "mode": "100644",
+      "bytes": 6368,
+      "sha256": "4369674343f5355142e69544182d8fc0e67aa254df4d986ad578a750f4887c21"
+    },
+    {
+      "path": "backend/app/core/deps.py",
+      "mode": "100644",
+      "bytes": 9975,
+      "sha256": "a3b7eb248948948d737863ffb7f9e7077ed4b1cc08cb3661b626b6cdd7b9a68c"
+    },
+    {
+      "path": "backend/app/core/limiter.py",
+      "mode": "100644",
+      "bytes": 2147,
+      "sha256": "4aa65ec3d709384290251d6c639b293af199fbe64de152b08caeea9a5eb483f2"
+    },
+    {
+      "path": "backend/app/core/period_guard.py",
+      "mode": "100644",
+      "bytes": 2293,
+      "sha256": "5c1125136544ec5b7fbe1062554664515f1062eaac2ccfb61f371363b38d3831"
+    },
+    {
+      "path": "backend/app/core/security.py",
+      "mode": "100644",
+      "bytes": 6016,
+      "sha256": "279a82b838235878ffd93e4630863a74cc5b8d6ce13bc85ba39d0ab22942d887"
+    },
+    {
+      "path": "backend/app/core/sql_compat.py",
+      "mode": "100644",
+      "bytes": 401,
+      "sha256": "e2d11e7c26e0db00e73eefc5d3fb17359eb7e0626f83a7d75286023080032f52"
+    },
+    {
+      "path": "backend/app/main.py",
+      "mode": "100644",
+      "bytes": 6329,
+      "sha256": "ab505273c09b6a677a2fb4b6438f495a17a4a089ce6f50213bb3f748bb256e76"
+    },
+    {
+      "path": "backend/app/models/__init__.py",
+      "mode": "100644",
+      "bytes": 5388,
+      "sha256": "0b140eb3d0c819002c55f816f8f1a6c8324d04fd9850cedf5b4cc4b6ef59407b"
+    },
+    {
+      "path": "backend/app/models/admin.py",
+      "mode": "100644",
+      "bytes": 43188,
+      "sha256": "37fefc73e2d192552b6f62cacf4e0f7e650f3acce84b7bd4df193d6af2d64619"
+    },
+    {
+      "path": "backend/app/models/approval.py",
+      "mode": "100644",
+      "bytes": 30073,
+      "sha256": "9364268df6c2aab809b204c5013768a05105809bf7ea7775699f4d9215920f94"
+    },
+    {
+      "path": "backend/app/models/attendance.py",
+      "mode": "100644",
+      "bytes": 48146,
+      "sha256": "bdf53ff126337a0842d633517b917419b72eef05015dda482bbd100c113df81e"
+    },
+    {
+      "path": "backend/app/models/audit_log.py",
+      "mode": "100644",
+      "bytes": 5577,
+      "sha256": "f4783f714ab22cca15c2ebcda731a82b22a1a5effc9a60bc474d62f73cb606f5"
+    },
+    {
+      "path": "backend/app/models/business_event.py",
+      "mode": "100644",
+      "bytes": 3805,
+      "sha256": "f73969a9f8a0932c867809069cd55f1acd76ef759dd437c08a2d1745f4676c6a"
+    },
+    {
+      "path": "backend/app/models/changelog.py",
+      "mode": "100644",
+      "bytes": 6246,
+      "sha256": "eb8f14717aae67fd3aa8c0f72332c0f16e0439eb9bfcb3a8e68e5e1918d80724"
+    },
+    {
+      "path": "backend/app/models/chat.py",
+      "mode": "100644",
+      "bytes": 20718,
+      "sha256": "0021940927bdaf92cb797e740442a3b056984fe84fd214e8ec1a18d4ba1199c4"
+    },
+    {
+      "path": "backend/app/models/competency.py",
+      "mode": "100644",
+      "bytes": 17055,
+      "sha256": "075c1686098ed17b32a35161fad13f4b43a6453fae13d8bbacd23aea1fe33698"
+    },
+    {
+      "path": "backend/app/models/employee.py",
+      "mode": "100644",
+      "bytes": 42034,
+      "sha256": "354b765379f547c1798ae2191679720a08fa5cfe2b490990359e10bdf2c63a8d"
+    },
+    {
+      "path": "backend/app/models/employee_role.py",
+      "mode": "100644",
+      "bytes": 5471,
+      "sha256": "e28b785092656bd2033cac3180c9ac77805ee5670ac33f9d8022bbaf4ae041e7"
+    },
+    {
+      "path": "backend/app/models/field_absence.py",
+      "mode": "100644",
+      "bytes": 1357,
+      "sha256": "a400a418f82f95d8e37d0c833d8b12366c9f656d9a411de4fd7ec39ad678d8b1"
+    },
+    {
+      "path": "backend/app/models/field_service.py",
+      "mode": "100644",
+      "bytes": 13599,
+      "sha256": "949e8400fee837c9f6fc1a4772a0541f63015f690642b0d870dbedfac61a6e28"
+    },
+    {
+      "path": "backend/app/models/headhunter.py",
+      "mode": "100644",
+      "bytes": 10222,
+      "sha256": "a3900fa704cb4a0fd2c73ac5fa7852f692864251672e715a8d7326b8517d539f"
+    },
+    {
+      "path": "backend/app/models/leave.py",
+      "mode": "100644",
+      "bytes": 27860,
+      "sha256": "180504d6776336d0537540ecf5eb1c61b35a98b33093c1f3a6626c90eb6142da"
+    },
+    {
+      "path": "backend/app/models/monthly_field.py",
+      "mode": "100644",
+      "bytes": 3231,
+      "sha256": "e7e8add248a9a8544e94db4964c8c2897f33d2c5f84baf658c58894cbca29b40"
+    },
+    {
+      "path": "backend/app/models/notification.py",
+      "mode": "100644",
+      "bytes": 6589,
+      "sha256": "0f09a964631aec54e93e4b88882b1090aa0ae0d05d0f0056e19a62875fba1bce"
+    },
+    {
+      "path": "backend/app/models/organization.py",
+      "mode": "100644",
+      "bytes": 19000,
+      "sha256": "5ee344c8cdfafc4bb90b56406daec4c5c4421535ab4e0e70aafbcbdb339f1da9"
+    },
+    {
+      "path": "backend/app/models/overtime.py",
+      "mode": "100644",
+      "bytes": 6346,
+      "sha256": "593607364a9ec1356bc0d621a37bd3eabd9c8d77b13d2cd68c8ac6bec00869e9"
+    },
+    {
+      "path": "backend/app/models/payroll.py",
+      "mode": "100644",
+      "bytes": 61682,
+      "sha256": "8baadf99554fa255f9dbae4b2911acd2db1add364ffdf0e7b0cd219b58f161f4"
+    },
+    {
+      "path": "backend/app/models/performance.py",
+      "mode": "100644",
+      "bytes": 31787,
+      "sha256": "39adc067d7bf3147de6941700b66c17a03b4ce94ecee2cd9ea241ff66d02561b"
+    },
+    {
+      "path": "backend/app/models/recruitment.py",
+      "mode": "100644",
+      "bytes": 57127,
+      "sha256": "b31e722913f735a6e249c50a4ca8da4b2dbc83c64e714cb07bb1a69aaa9d9b50"
+    },
+    {
+      "path": "backend/app/models/rotation.py",
+      "mode": "100644",
+      "bytes": 4694,
+      "sha256": "9d2075d91eb66156e8687a6bf1497b660e9c733862073a78de4b4e77f072f833"
+    },
+    {
+      "path": "backend/app/models/rotation_entitlement.py",
+      "mode": "100644",
+      "bytes": 4235,
+      "sha256": "bc43054ea8f2098fdecd5129ca912fc851bfb4a1e604b6071c27affd3cb8810e"
+    },
+    {
+      "path": "backend/app/models/rotation_person_plan.py",
+      "mode": "100644",
+      "bytes": 2435,
+      "sha256": "8852fe0be0ec6c36a68185a6c927f7cde7f716e1e29132d705de3e18f2d70fa1"
+    },
+    {
+      "path": "backend/app/models/system_setting.py",
+      "mode": "100644",
+      "bytes": 403,
+      "sha256": "1b92de93355d3107e063cc2680cb51bfc8231d7112ea3dae49c8cdfdc2a054fa"
+    },
+    {
+      "path": "backend/app/models/talent.py",
+      "mode": "100644",
+      "bytes": 21549,
+      "sha256": "1ab61ab53a5ddd8eadc922c9572ea84cb789f9fd87bcf495bd67b6cc6081f5d2"
+    },
+    {
+      "path": "backend/app/models/talent_profile.py",
+      "mode": "100644",
+      "bytes": 5347,
+      "sha256": "e9f1179f4288473d7a84efbb1c691a154dea29099112dc55f1c0d14e32643ff6"
+    },
+    {
+      "path": "backend/app/models/talent_review.py",
+      "mode": "100644",
+      "bytes": 15645,
+      "sha256": "e965d34f153a06f3195240d41b80180627b754cb8566bbd1e4935bbf8c60b8f9"
+    },
+    {
+      "path": "backend/app/models/training.py",
+      "mode": "100644",
+      "bytes": 32663,
+      "sha256": "218a0e75c5e0d29e71a499b9326e05fe245e007ffbbf82eeff69a581b605ae4e"
+    },
+    {
+      "path": "backend/app/models/vendor.py",
+      "mode": "100644",
+      "bytes": 34205,
+      "sha256": "f1b935fd57f1e7d308fcc08b8016c37b61013e268300093f095b58b4dd194831"
+    },
+    {
+      "path": "backend/app/schemas/__init__.py",
+      "mode": "100644",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "backend/app/schemas/admin.py",
+      "mode": "100644",
+      "bytes": 43224,
+      "sha256": "56913d8ce9b509e628c4191c71da6526d1c88e347d0474d552c61454d04e134e"
+    },
+    {
+      "path": "backend/app/schemas/analytics.py",
+      "mode": "100644",
+      "bytes": 13121,
+      "sha256": "a51ba5e0228e89c698e86f2741ddab81e1f0b99bd69a2c86b9ca46b0a7aa3640"
+    },
+    {
+      "path": "backend/app/schemas/approval.py",
+      "mode": "100644",
+      "bytes": 33258,
+      "sha256": "fe2b0fc02de144417b9b4c7c1486f3c4e4dea8c879a513edbd14af77f89932ef"
+    },
+    {
+      "path": "backend/app/schemas/attendance.py",
+      "mode": "100644",
+      "bytes": 42486,
+      "sha256": "19789b9a5194ecc75bebd9185d3a02ff8d9dad0056ae49f0ad3949d5da1e3079"
+    },
+    {
+      "path": "backend/app/schemas/audit_log.py",
+      "mode": "100644",
+      "bytes": 5209,
+      "sha256": "0d50a15f53a767a422cfa9c6c663cdf2b5a1c520ca795b64441d84fbeb9a45ca"
+    },
+    {
+      "path": "backend/app/schemas/chat.py",
+      "mode": "100644",
+      "bytes": 13454,
+      "sha256": "4afeeb3728aaf92a56ff65810d050000a08205270fb7bd4497d6a080d15ab36d"
+    },
+    {
+      "path": "backend/app/schemas/competency.py",
+      "mode": "100644",
+      "bytes": 15196,
+      "sha256": "537f6903b39fd5054d34398039c6bd3d14a223602a1ac21259fd264122591697"
+    },
+    {
+      "path": "backend/app/schemas/dashboard.py",
+      "mode": "100644",
+      "bytes": 32260,
+      "sha256": "3c33622bf2fb3d29d97b9f164c210773f9c4b2eceef62d2b246275d7a4d30270"
+    },
+    {
+      "path": "backend/app/schemas/employee.py",
+      "mode": "100644",
+      "bytes": 45184,
+      "sha256": "f4d1e6dfcef0b195f5928694dc466225e46c021c3e6df56f671ae5a7a1c402d8"
+    },
+    {
+      "path": "backend/app/schemas/field_roster.py",
+      "mode": "100644",
+      "bytes": 3280,
+      "sha256": "7ad211a3ac9a8c0a4a830470903cbb84331a21fb75c2485e6a9bfeaa4ab64057"
+    },
+    {
+      "path": "backend/app/schemas/field_service.py",
+      "mode": "100644",
+      "bytes": 5083,
+      "sha256": "e4b89e6105c7fa3c358515c8e2a5ed80da12606cb45d38ef5b4262d01d5808d7"
+    },
+    {
+      "path": "backend/app/schemas/headhunter.py",
+      "mode": "100644",
+      "bytes": 11914,
+      "sha256": "5500fbe526334831b301cf9ad1e263a3a004ba87180e0fc25b555bd324850aca"
+    },
+    {
+      "path": "backend/app/schemas/leave.py",
+      "mode": "100644",
+      "bytes": 24122,
+      "sha256": "9bded7e674f8294390103a3e325c7203f85b00aa13186a41ffc4c2a97191d5e1"
+    },
+    {
+      "path": "backend/app/schemas/notification.py",
+      "mode": "100644",
+      "bytes": 7471,
+      "sha256": "e3229669c307bd8d275e2902d655cecd7d64eb48caebda5e100ab0725ce9759c"
+    },
+    {
+      "path": "backend/app/schemas/organization.py",
+      "mode": "100644",
+      "bytes": 9681,
+      "sha256": "8c05e545b757d791899c2abd7e9ca835e14c3280a88da61efd14b0b79cc3d741"
+    },
+    {
+      "path": "backend/app/schemas/payroll.py",
+      "mode": "100644",
+      "bytes": 53889,
+      "sha256": "137f90ff9286c2722da235f313f90efd335eaa173272548df9ce8fb8cf917bc0"
+    },
+    {
+      "path": "backend/app/schemas/performance.py",
+      "mode": "100644",
+      "bytes": 32943,
+      "sha256": "cf82af3dd321d5385e156b7731dd0a0f78731203cc98727c63d19cd382fedb34"
+    },
+    {
+      "path": "backend/app/schemas/recruitment.py",
+      "mode": "100644",
+      "bytes": 62744,
+      "sha256": "ce11e8e6ef0176e6c52a9f549c79b17e4e9c92d89720018113963608bad1b24f"
+    },
+    {
+      "path": "backend/app/schemas/rotation.py",
+      "mode": "100644",
+      "bytes": 6037,
+      "sha256": "d8ea4a9807d46b6eb1b2944f4919d5b0f75061afec3108782a466188ff9dad39"
+    },
+    {
+      "path": "backend/app/schemas/talent.py",
+      "mode": "100644",
+      "bytes": 19936,
+      "sha256": "273f2d88158debbd0003220335319e6f91fe62f9f52743c5fcff70e02f506509"
+    },
+    {
+      "path": "backend/app/schemas/talent_profile.py",
+      "mode": "100644",
+      "bytes": 17069,
+      "sha256": "61e0161da3b2f85329896a723c1029687cd270b733c8cc119249f3bfcba29966"
+    },
+    {
+      "path": "backend/app/schemas/talent_review.py",
+      "mode": "100644",
+      "bytes": 20956,
+      "sha256": "e16081a72864887e499e0ae322290a799dfb67c74dcdec8cc878994bce817300"
+    },
+    {
+      "path": "backend/app/schemas/training.py",
+      "mode": "100644",
+      "bytes": 28066,
+      "sha256": "2394f1015adc18b7f1253a9a141d5f753bddf91c9a48562929ce6f2c3a433ac1"
+    },
+    {
+      "path": "backend/app/schemas/vendor.py",
+      "mode": "100644",
+      "bytes": 35147,
+      "sha256": "2eabfb70f91030983696fd931ed60420e2f8c40b061f4a46b39be6bb696a9dff"
+    },
+    {
+      "path": "backend/app/services/__init__.py",
+      "mode": "100644",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "backend/app/services/admin.py",
+      "mode": "100644",
+      "bytes": 79879,
+      "sha256": "2556da5f39890aea83cc2b96216a2491c33b4f63cc0482f9d58148e2420cecab"
+    },
+    {
+      "path": "backend/app/services/analytics.py",
+      "mode": "100644",
+      "bytes": 30129,
+      "sha256": "5af92fff613549807d2d7d6ec0262491e635e88a96f3f3eee6f1bb03960faff3"
+    },
+    {
+      "path": "backend/app/services/approval.py",
+      "mode": "100644",
+      "bytes": 321729,
+      "sha256": "ccc9eab7228cba3aebc13a500fd89cff8067467bfbb520f3b8daf515d2396a0b"
+    },
+    {
+      "path": "backend/app/services/attendance.py",
+      "mode": "100644",
+      "bytes": 482125,
+      "sha256": "e63f247e387ac48e8f0e3bfea5c8b0b66a1dcd7b918948b3f237f71aedbbb7f6"
+    },
+    {
+      "path": "backend/app/services/attendance_effects.py",
+      "mode": "100644",
+      "bytes": 48539,
+      "sha256": "5443f8730a694f528dc50a0c91deaba3f158dd44b7e501db2a82203f5951689b"
+    },
+    {
+      "path": "backend/app/services/attendance_recalc.py",
+      "mode": "100644",
+      "bytes": 1982,
+      "sha256": "38f7fc512538ceb59a296257aad8eb1b03f065f922b8c3bb264970784357a2d1"
+    },
+    {
+      "path": "backend/app/services/audit_log.py",
+      "mode": "100644",
+      "bytes": 8540,
+      "sha256": "4d987fade48d2c3901be8e288f12dc53b1720f9dcc2d1204c61a4f497ab8300c"
+    },
+    {
+      "path": "backend/app/services/chat.py",
+      "mode": "100644",
+      "bytes": 125333,
+      "sha256": "8209f3a0a9c88df7fe5b1ab3c5e879d6260fea23735ce8b0bb926007377f6048"
+    },
+    {
+      "path": "backend/app/services/competency.py",
+      "mode": "100644",
+      "bytes": 28830,
+      "sha256": "54de6a76606e7b7d9b75297217a3f79d4426dc2f51c4a637748a563f53e41141"
+    },
+    {
+      "path": "backend/app/services/dashboard.py",
+      "mode": "100644",
+      "bytes": 45009,
+      "sha256": "757253e2cc80941e781abce42d85d7390c3916e9c54db0d36ba397e4f7bd878c"
+    },
+    {
+      "path": "backend/app/services/employee.py",
+      "mode": "100644",
+      "bytes": 122990,
+      "sha256": "49680f4d4f2b1d63305f0d03032e0c0f18c5d4be904e16f759fe3d3502f7ee49"
+    },
+    {
+      "path": "backend/app/services/ess.py",
+      "mode": "100644",
+      "bytes": 12758,
+      "sha256": "007ca35694c5e279c1e0655c28553132d82fc9ec8c7beb9f835af8ca161d5d16"
+    },
+    {
+      "path": "backend/app/services/event_dispatcher.py",
+      "mode": "100644",
+      "bytes": 4699,
+      "sha256": "1e3004f1c481e68a9510a4126cd5fbc21f832fbed81e4884a6b098042ba4ecb4"
+    },
+    {
+      "path": "backend/app/services/events.py",
+      "mode": "100644",
+      "bytes": 3344,
+      "sha256": "7ef100a7f9a148a5048dcaf0c6a1bd3cebdf188ef8824fdbb6b5a9a11074a5b0"
+    },
+    {
+      "path": "backend/app/services/field_absence.py",
+      "mode": "100644",
+      "bytes": 3325,
+      "sha256": "b3fac04b132788859f03bd056035502ed0b06589c38594870e0bf55cf9e9b049"
+    },
+    {
+      "path": "backend/app/services/field_dashboard.py",
+      "mode": "100644",
+      "bytes": 11263,
+      "sha256": "14facdb37c166423ebb15e0bac06dd75279aad8fba48598322304500f3da6b45"
+    },
+    {
+      "path": "backend/app/services/field_jobs.py",
+      "mode": "100644",
+      "bytes": 3177,
+      "sha256": "f30073ad525f7dc534efb7fd29630875faca7dc12018bf4296bd75daef1d5374"
+    },
+    {
+      "path": "backend/app/services/field_membership.py",
+      "mode": "100644",
+      "bytes": 38931,
+      "sha256": "5f6a932214a4947f3036b1040e90ac1c4853ef163e9cd8776395a0ae1db16094"
+    },
+    {
+      "path": "backend/app/services/field_pending.py",
+      "mode": "100644",
+      "bytes": 17513,
+      "sha256": "d2232aef0b77336c5ca1d8ce38164a87a0bf7dee4a99ee732c87dbf4f9c61ec4"
+    },
+    {
+      "path": "backend/app/services/field_policies.py",
+      "mode": "100644",
+      "bytes": 3554,
+      "sha256": "cb5e660c392ef62fd470d9baf0e54d1bb88c970ac4c55d2df0a990187353f8eb"
+    },
+    {
+      "path": "backend/app/services/field_positions.py",
+      "mode": "100644",
+      "bytes": 2673,
+      "sha256": "5db395edda1d46972f00d582b656462e45b649a05bc72ce35ab9df70fe576efb"
+    },
+    {
+      "path": "backend/app/services/field_project_import.py",
+      "mode": "100644",
+      "bytes": 19182,
+      "sha256": "53b64b2347d1e3b0d4825bd2c0bb7362efc196f4e1cb922de2646a8a82c004f5"
+    },
+    {
+      "path": "backend/app/services/field_roles.py",
+      "mode": "100644",
+      "bytes": 9875,
+      "sha256": "d19ed5b3dce41b553ea3d5b92d58f3700baf169197b4843395d5981a71d6aab6"
+    },
+    {
+      "path": "backend/app/services/field_roster.py",
+      "mode": "100644",
+      "bytes": 12399,
+      "sha256": "d870b5ef2440a52f2975dcc89282dc0c0d64957e50e5909b0a0c2da51d3dfb48"
+    },
+    {
+      "path": "backend/app/services/field_service.py",
+      "mode": "100644",
+      "bytes": 52713,
+      "sha256": "ab389561e73b965adbf17d3cb205032e446b07509b493cca1cf270f42b8d7743"
+    },
+    {
+      "path": "backend/app/services/headhunter.py",
+      "mode": "100644",
+      "bytes": 12315,
+      "sha256": "fe82eb6a5a0cba9e4b704fe2f4472916abaa0defe982222a125880d0aa5fa8b1"
+    },
+    {
+      "path": "backend/app/services/leave.py",
+      "mode": "100644",
+      "bytes": 121492,
+      "sha256": "f02b6af335bba56132790b309bd5fd08ecccc4cf7ce6765780b620acf760ccb1"
+    },
+    {
+      "path": "backend/app/services/leave_events.py",
+      "mode": "100644",
+      "bytes": 17547,
+      "sha256": "4b6f561a2ade2e3afbc79147fe871f5c8f4319e617fc056a1b64fa3fc0263f78"
+    },
+    {
+      "path": "backend/app/services/legal_holidays.py",
+      "mode": "100644",
+      "bytes": 6251,
+      "sha256": "9f6c7c2c6a9bd08b27d48f4d92666aee02aff567985ca3a3aec33a2d3d033746"
+    },
+    {
+      "path": "backend/app/services/map_settings.py",
+      "mode": "100644",
+      "bytes": 882,
+      "sha256": "349f3301cda7b2b84e20fdddb2ea2512f4c46e9aefc5b2b37c3abc8b04bca409"
+    },
+    {
+      "path": "backend/app/services/monthly_field.py",
+      "mode": "100644",
+      "bytes": 16482,
+      "sha256": "c2ee6bad1572e45dd432ac7e7274702afeaa684c32be4ab779d40d89d9e8aaee"
+    },
+    {
+      "path": "backend/app/services/notification.py",
+      "mode": "100644",
+      "bytes": 10608,
+      "sha256": "16dc71a513d9ef191bcbb7b43434bc893b66b6a925bbdce99f90b81334d62365"
+    },
+    {
+      "path": "backend/app/services/organization.py",
+      "mode": "100644",
+      "bytes": 31539,
+      "sha256": "3ddd3fc3f788da3c0063f5f0ab419382ee6a56baeb47a1a64e029f1d236407cf"
+    },
+    {
+      "path": "backend/app/services/payroll.py",
+      "mode": "100644",
+      "bytes": 202024,
+      "sha256": "b51246db028835960f7ff8fa1a44b2c7fc1c09f1f597dd842405738dab7548cb"
+    },
+    {
+      "path": "backend/app/services/performance.py",
+      "mode": "100644",
+      "bytes": 63327,
+      "sha256": "8a13c00f53e10a4624f5490cd0f41b6d33953c19eabec95a71ed01cbf9dd4edb"
+    },
+    {
+      "path": "backend/app/services/recruitment.py",
+      "mode": "100644",
+      "bytes": 139115,
+      "sha256": "f604ebe597f8251adca8f5eef63cbb746d10f7a1a1c145cd9e2db803db959092"
+    },
+    {
+      "path": "backend/app/services/rotation.py",
+      "mode": "100644",
+      "bytes": 56532,
+      "sha256": "0530341369b815c859249ad62c2fe2b45e74caf815a17eb9f7aaa01f73a88257"
+    },
+    {
+      "path": "backend/app/services/rotation_draft.py",
+      "mode": "100644",
+      "bytes": 19963,
+      "sha256": "1736fd3e7d53120c15168fb4346d9806f0ee7ba3600db5687d28190a36765c3d"
+    },
+    {
+      "path": "backend/app/services/rotation_entitlement.py",
+      "mode": "100644",
+      "bytes": 25757,
+      "sha256": "d4a50f2e425457bd067b30cca4ddede1ffdd64ba5711be95fba71d9f1b2a8c59"
+    },
+    {
+      "path": "backend/app/services/rotation_person_plan.py",
+      "mode": "100644",
+      "bytes": 25348,
+      "sha256": "5357e635e475ccff8581a375e814eaf3d41e9bb269194c00f558bc5a38b4503f"
+    },
+    {
+      "path": "backend/app/services/talent.py",
+      "mode": "100644",
+      "bytes": 32879,
+      "sha256": "1f100d0eacce24a248f5c56bc4002451e9a4e86f3f80f8543e3077d83e7666d8"
+    },
+    {
+      "path": "backend/app/services/talent_profile.py",
+      "mode": "100644",
+      "bytes": 41408,
+      "sha256": "fa2f2c3e5c12c50f824f5042d43e5aa9450eb68f2f32b9f80c9f40d82a7f8509"
+    },
+    {
+      "path": "backend/app/services/talent_review.py",
+      "mode": "100644",
+      "bytes": 30746,
+      "sha256": "80b6c9b63ef9d67dbda68e9cd80207f9a4002e9b1262582e09ff33503d5e943a"
+    },
+    {
+      "path": "backend/app/services/tegene_projects.py",
+      "mode": "100644",
+      "bytes": 10117,
+      "sha256": "2e48a05bf261dfd14f33e7205ff31d9c31b54a96775e2070a1faebd7eeaca88a"
+    },
+    {
+      "path": "backend/app/services/training.py",
+      "mode": "100644",
+      "bytes": 53563,
+      "sha256": "6366c30a8da67bcb5b9d3d86f92f59fdf14c3eb38c011dc0f997234e685bd9ed"
+    },
+    {
+      "path": "backend/app/services/vendor.py",
+      "mode": "100644",
+      "bytes": 53383,
+      "sha256": "3b666e8e45abbb97f71f9bc78ac7b0840298663f4ab938ceeff2fbf32cbf8453"
+    },
+    {
+      "path": "backend/app/services/wecom_auth.py",
+      "mode": "100644",
+      "bytes": 10513,
+      "sha256": "60999425f29e9ce476df929e23d638f6f36f42ddb11e99463b41c918d74e0200"
+    },
+    {
+      "path": "backend/app/templates/aftersales-roster.xlsx",
+      "mode": "100644",
+      "bytes": 4306,
+      "sha256": "499b1f96c467d466e523b999a1351bdb37315eb64001179f852df2260fa3f1e7"
+    },
+    {
+      "path": "backend/requirements.txt",
+      "mode": "100644",
+      "bytes": 445,
+      "sha256": "73ed15ddc4509010b2f859c8d1d20bbc44fade2970426afdcb82c7d155f3e909"
+    },
+    {
+      "path": "backend/tests/test_field_project_import.py",
+      "mode": "100644",
+      "bytes": 20240,
+      "sha256": "2332028e0db1d1f194a961fbd301927e518e6482b98a81a9a0396636ca9fbee5"
+    },
+    {
+      "path": "backend/tests/test_field_project_location.py",
+      "mode": "100644",
+      "bytes": 15412,
+      "sha256": "5e7368fcaf4d175d18a504e4bfdca4f54ede3e142553e65d8659c4e4051aa5f0"
+    },
+    {
+      "path": "backend/tests/test_field_project_schema_v16.py",
+      "mode": "100644",
+      "bytes": 7527,
+      "sha256": "4bc1dbb39feb9b2a2df3b1989154e2fc3ad551cde6f6e0082000cefb50cc3df3"
+    },
+    {
+      "path": "backend/tests/test_field_rules.py",
+      "mode": "100644",
+      "bytes": 6182,
+      "sha256": "1c904e73bf4041dbee0e73dee5eb7fbcf41900b88b17d7f11cf6475ba2d8f9d2"
+    },
+    {
+      "path": "backend/tests/test_field_selector_categories.py",
+      "mode": "100644",
+      "bytes": 6573,
+      "sha256": "41e3042888f48feaf7486d9e785662cc933ce2ab1dc31915dead21a2ffa72fa9"
+    },
+    {
+      "path": "backend/tests/test_local_short_login.py",
+      "mode": "100644",
+      "bytes": 4605,
+      "sha256": "e9dc4e9992a2f0da71cc1c92163a94a74526f04fc1e031fb1539d8caa0947ae3"
+    },
+    {
+      "path": "backend/tests/test_manager_project_configuration.py",
+      "mode": "100644",
+      "bytes": 5279,
+      "sha256": "4d986ebab9d046868f7f27eb792129c4b4e089e04766f902d0a441d9eba111a2"
+    },
+    {
+      "path": "backend/tests/test_pending_project_roster.py",
+      "mode": "100644",
+      "bytes": 30513,
+      "sha256": "1fea921436e398a143281c8a4a118ea98e335a7fc8115a856fda38235d2513d8"
+    },
+    {
+      "path": "backend/tests/test_project_attendance_rule_permissions.py",
+      "mode": "100644",
+      "bytes": 6752,
+      "sha256": "58ab7ca96ffdd933c497a26e7ecd30d8dc2c54bcaa9532ab4b2133d9ab1b0100"
+    },
+    {
+      "path": "backend/tests/test_rotation_entitlement.py",
+      "mode": "100644",
+      "bytes": 33808,
+      "sha256": "8904790b717e54ffe8a1916e94ffb9c2faafe428d4d5ffc8522be2025471b155"
+    },
+    {
+      "path": "backend/tests/test_rotation_inflight_rule_change.py",
+      "mode": "100644",
+      "bytes": 5099,
+      "sha256": "0418df095db848c4a8c6b6dc1b2e09fd4efffa84c0de2e71b303c65faaff63d0"
+    },
+    {
+      "path": "backend/tests/test_rotation_person_plan.py",
+      "mode": "100644",
+      "bytes": 15081,
+      "sha256": "5959f6a49ee5d7e1b8b0392597d165aeab16d869d7c16a79807d12432c984024"
+    },
+    {
+      "path": "backend/tests/test_rotation_pre_rule.py",
+      "mode": "100644",
+      "bytes": 16058,
+      "sha256": "0af37458c5f63253f842f63c400c77eca09f31de15998ccbeec055d35e0edd9d"
+    },
+    {
+      "path": "backend/tests/test_rotation_weekly_publish.py",
+      "mode": "100644",
+      "bytes": 12502,
+      "sha256": "e19a0077f15d93fb50b72c2f4418404dfab210666c10d57b86830fbfa9b2ef90"
+    },
+    {
+      "path": "backend/tests/test_unassigned_local_projects.py",
+      "mode": "100644",
+      "bytes": 3848,
+      "sha256": "0dfd96eac27ad05b68e09a97130a429ff5650f9d640ff3e7e116608f9febcd16"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_attachment_control.py",
+      "mode": "100644",
+      "bytes": 1344,
+      "sha256": "807cbf881ec4333714533c3e8cddb7e6247107bbd14f9fcfc3b36c7fad08f25a"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_attendance_leave_e2e.py",
+      "mode": "100644",
+      "bytes": 31829,
+      "sha256": "13fdf6e1203551ee5a715b1c1a056e2ea9213459efc5af6404ebd61d801ed9df"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_condition_branch_groups.py",
+      "mode": "100644",
+      "bytes": 12380,
+      "sha256": "5893b4699af5873405595f0614e26d08990ceebbda83a579aef4a1609435d873"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_flow_person_display.py",
+      "mode": "100644",
+      "bytes": 20322,
+      "sha256": "c28a5427d24a8a658190d15174685a88b5cce29b2adfcdc1a437fe8a3e2080d7"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_flow_progress.py",
+      "mode": "100644",
+      "bytes": 13048,
+      "sha256": "2967db11f966cf8c7c52e38083b94acd6ab8dcd3c4e1591ea8ee40ea11727e00"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_instance_detail_org_display.py",
+      "mode": "100644",
+      "bytes": 2595,
+      "sha256": "a433d65fadc5a2d0a9a02d80cd59dc3f503c265f266284a13cb3d1cdb511ecc1"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_mobile_center_contract.py",
+      "mode": "100644",
+      "bytes": 1982,
+      "sha256": "ab940a5b127d69784cc274b7e4d2bd9419140659490a98f27354fcae0259d7fa"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_organization.py",
+      "mode": "100644",
+      "bytes": 10075,
+      "sha256": "737d0b2d9321aeeb0cb78d16cd231ef202125893cbfe610ff26183901685caca"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_platform.py",
+      "mode": "100644",
+      "bytes": 15980,
+      "sha256": "6970e416bad880796ff075b0186191d458aaef307057d6cdb6ec852becb2d8bb"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_service.py",
+      "mode": "100644",
+      "bytes": 61452,
+      "sha256": "f9edbed852de982ba33afa91a956671b8ad2b1788ab186546b16ad1d8162c99b"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_template_config_integration.py",
+      "mode": "100644",
+      "bytes": 19151,
+      "sha256": "26b6d8e6f4420f5ca5a039d2e01ed395283703d827e30419a37920bc2f6c8bc0"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_template_configurator.py",
+      "mode": "100644",
+      "bytes": 55589,
+      "sha256": "53748bcf6d8f45500591b383e379f43cf4c52d64065dceab7a6ebdd7e35dca73"
+    },
+    {
+      "path": "backend/tests/upstream/test_approval_template_full.py",
+      "mode": "100644",
+      "bytes": 11547,
+      "sha256": "71f424b88b40d4755def6e74cbcc818c74d608a736bd6284692a364cbf0cdc4e"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_daily_report_contract.py",
+      "mode": "100644",
+      "bytes": 13691,
+      "sha256": "7e23f628d59f3fc0a036f961bd82550c30c61e62553051aa7c0a740610b179c9"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_mobile_flow.py",
+      "mode": "100644",
+      "bytes": 23687,
+      "sha256": "eaecb5d551399c14d58bb6ac1e98bdd1a37025f178d99151ab6b0ec1e72aebaa"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_monthly_report_tasks.py",
+      "mode": "100644",
+      "bytes": 2829,
+      "sha256": "46bb295652b77ec80021ee2e29a8e5671966e1c4de6c4bc1568b97394c709e85"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_punch_correction_eligibility.py",
+      "mode": "100644",
+      "bytes": 10860,
+      "sha256": "45b47a8bd18d3a5a4dc7d7f6395efcdd0a6cf3777cd3027e686687be1b5008d8"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_record_filters.py",
+      "mode": "100644",
+      "bytes": 2299,
+      "sha256": "79768019dfaf1482e63d0b3f545a6f73d8cf87d71f9210e1cf7fa4a4fd53fb40"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_service.py",
+      "mode": "100644",
+      "bytes": 58717,
+      "sha256": "830079eb956425cfe37668fa4bf249070b2a185778611080dd0eb59b6aa4315e"
+    },
+    {
+      "path": "backend/tests/upstream/test_attendance_status.py",
+      "mode": "100644",
+      "bytes": 8401,
+      "sha256": "07b151a95cc6dcbb7dbbe1c8e83ea111b521491a0cf3c94f01a37eb8ee1757ee"
+    },
+    {
+      "path": "backend/tests/upstream/test_business_event_linkage.py",
+      "mode": "100644",
+      "bytes": 28525,
+      "sha256": "fee84376066fd59c45c188331ee835b509cf184da6d1659582886fee06b5a7f6"
+    },
+    {
+      "path": "backend/tests/upstream/test_deps_auth.py",
+      "mode": "100644",
+      "bytes": 3894,
+      "sha256": "40492b03ea2e077fe59d6aa2e46515d95962e845b5270953b6c32f303ede1a4d"
+    },
+    {
+      "path": "backend/tests/upstream/test_employee_selector_permissions.py",
+      "mode": "100644",
+      "bytes": 2552,
+      "sha256": "323afb662b0d77d1c1aedefe41b771149948b8a40c5fc1c15ac97cb5e8d2520f"
+    },
+    {
+      "path": "backend/tests/upstream/test_leave_approve.py",
+      "mode": "100644",
+      "bytes": 1612,
+      "sha256": "d00dbc9133e730492a724c491cfbe1c38fef2f985be74b05b8ce7a2f7e709dcb"
+    },
+    {
+      "path": "backend/tests/upstream/test_leave_service.py",
+      "mode": "100644",
+      "bytes": 38151,
+      "sha256": "8e8389dfc7e194e15d88a11ba965da267bda22a957299fca8352965b672f0c47"
+    },
+    {
+      "path": "backend/tests/upstream/test_mvp_approval_entry_consolidation.py",
+      "mode": "100644",
+      "bytes": 2736,
+      "sha256": "a319f6aafd6adbdbd549d6396b8c074e073b8d3c7b67e4ae8576a6db50d90599"
+    },
+    {
+      "path": "backend/tests/upstream/test_notification_service.py",
+      "mode": "100644",
+      "bytes": 2026,
+      "sha256": "585a15cf15eb9600266421d6bfa30268eaea26ae0a6bac0cac8c06583a5f18ef"
+    },
+    {
+      "path": "backend/tests/upstream/test_overtime_service.py",
+      "mode": "100644",
+      "bytes": 12940,
+      "sha256": "39a1c75aaaec2b7bffcaed88a791338c3bb98b7dd85eb34d68ca63d83ea9dae0"
+    },
+    {
+      "path": "backend/tests/upstream/test_rbac_service.py",
+      "mode": "100644",
+      "bytes": 9333,
+      "sha256": "aa1df7e847f6fdad87729cbd411a9f4ed9f1fd2a20588c4a07a41b0447f52a08"
+    },
+    {
+      "path": "backend/tests/upstream/test_security.py",
+      "mode": "100644",
+      "bytes": 2406,
+      "sha256": "80de0386ca278da5630e4dbdd21fffabb885b805e924d33ba7d45417d125f361"
+    },
+    {
+      "path": "backend/tests/upstream/test_upload_file_types.py",
+      "mode": "100644",
+      "bytes": 813,
+      "sha256": "15967575eff2a6aa55accf140d13cfe34139de311d3f6741d59f33a49bde38b1"
+    },
+    {
+      "path": "branding/location-mark.svg",
+      "mode": "100644",
+      "bytes": 892,
+      "sha256": "38a6933e8b06ec7689574dee07a30be26e122b583496106c09fa140785d199d0"
+    },
+    {
+      "path": "branding/shouhou-location-wecom-750.png",
+      "mode": "100644",
+      "bytes": 54392,
+      "sha256": "916667464ef12696bba9f491dfd986716ad8eb3bac5a285fad19dc7c732ce72e"
+    },
+    {
+      "path": "deploy/.env.example",
+      "mode": "100644",
+      "bytes": 843,
+      "sha256": "b12231622ff88bd497cdbcc4614eb52613005061d4103217b17cc0665434eae7"
+    },
+    {
+      "path": "deploy/Dockerfile.web",
+      "mode": "100644",
+      "bytes": 494,
+      "sha256": "de99c46767055a033afd6c2ef0806c3344baff586e1b2b85dfc25b917c48ee6f"
+    },
+    {
+      "path": "deploy/compose.yaml",
+      "mode": "100644",
+      "bytes": 3221,
+      "sha256": "d2b2d571176a4d9a1aa950ce16c6c70502a182f2a05494096ce3853664f8f05b"
+    },
+    {
+      "path": "deploy/edge.conf",
+      "mode": "100644",
+      "bytes": 1181,
+      "sha256": "91be8d07d1fb5c1fb3502ef37b8ed3b045933f276bc64577f4afc36fda87badf"
+    },
+    {
+      "path": "deploy/nginx.conf",
+      "mode": "100644",
+      "bytes": 694,
+      "sha256": "87b0a2fcb48c194f93d1ccdd4f767c5555841c4c61982519f2309f38238162dc"
+    },
+    {
+      "path": "deploy/storage.yaml",
+      "mode": "100644",
+      "bytes": 607,
+      "sha256": "e6c784e7dca3f2b8b22a2f9323218a458735a3c1f2adff51fae9b08c30317532"
+    },
+    {
+      "path": "docs/01-完整业务逻辑提炼.md",
+      "mode": "100644",
+      "bytes": 30609,
+      "sha256": "943111f446bffeb2a9bfd4f602b5fe010132933315c699066e97b91595209b98"
+    },
+    {
+      "path": "docs/02-可删减功能清单.md",
+      "mode": "100644",
+      "bytes": 31362,
+      "sha256": "5b942415bf1dcb50254e61ef9ebe0276c9e92ac7d2c99f9123decfe1a12fc56a"
+    },
+    {
+      "path": "docs/03-开发任务书.md",
+      "mode": "100644",
+      "bytes": 31637,
+      "sha256": "0d7f876065c21401f25d9ae4f50d1810eb03c895d43f35348fdbb52474555119"
+    },
+    {
+      "path": "docs/04-源码证据索引.md",
+      "mode": "100644",
+      "bytes": 39002,
+      "sha256": "24bb69bad734116065b155d8261e84201def947420f52a23d0dcf553e29cc2f3"
+    },
+    {
+      "path": "docs/05-本轮开发范围.md",
+      "mode": "100644",
+      "bytes": 1206,
+      "sha256": "e04f6e1e2657c4a601a0554da40233d068429e73e5640115dbbd53d9476ab88a"
+    },
+    {
+      "path": "docs/06-基础版交付与验收.md",
+      "mode": "100644",
+      "bytes": 10639,
+      "sha256": "c969f56aeb2c73b4d129bf113e31430b7263a52969d3eff6be57b379a99c5d63"
+    },
+    {
+      "path": "docs/07-部署与维护.md",
+      "mode": "100644",
+      "bytes": 11301,
+      "sha256": "0827a22780a874a021ce0065ffbaab8de875bad7feec7bfc6ba56462ba8a0706"
+    },
+    {
+      "path": "docs/08-原版UIUX沿用与核对.md",
+      "mode": "100644",
+      "bytes": 5676,
+      "sha256": "1c138b73649e9581fa62d1eea8d7b0453827c760ddbfc651e00a204ca35e4615"
+    },
+    {
+      "path": "docs/09-账号花名册与企微入口.md",
+      "mode": "100644",
+      "bytes": 10272,
+      "sha256": "e518da3fcac9b60b3099376b166aed0f6bc90af6014afd555c25bc9f1ff57a28"
+    },
+    {
+      "path": "docs/10-现场轮休.md",
+      "mode": "100644",
+      "bytes": 5010,
+      "sha256": "5fcdf646f1a5d76f63d4f0ad655235a86f934b512e38b3660f582c0507a4b03d"
+    },
+    {
+      "path": "docs/11-售后打卡系统设定与同事交接.md",
+      "mode": "100644",
+      "bytes": 5922,
+      "sha256": "720145a24443413d6bf3a90dd9ea94cf3bc848d037204823cb96e12438614186"
+    },
+    {
+      "path": "docs/品牌与企微工作台交接.md",
+      "mode": "100644",
+      "bytes": 1549,
+      "sha256": "b2f1a56ad015bac106833ee578587ffa808fdef70dc88fc5f06cbf0657e3443e"
+    },
+    {
+      "path": "evidence/.gitkeep",
+      "mode": "100644",
+      "bytes": 1,
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "frontend/auth-roster-smoke.mjs",
+      "mode": "100644",
+      "bytes": 9331,
+      "sha256": "6bb941ea6f9daf9cb47856c43423120279594921a307d47b967dd64a774e6842"
+    },
+    {
+      "path": "frontend/env.d.ts",
+      "mode": "100644",
+      "bytes": 537,
+      "sha256": "ff29136f2444d298d59b7ab428b4677ad00c4e0d2b5f4ac15e4846c74b99b78e"
+    },
+    {
+      "path": "frontend/index.html",
+      "mode": "100644",
+      "bytes": 374,
+      "sha256": "9544fcd28aef86c9a06e2d515047011307afd514a35639e74f65df9699012bbc"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "mode": "100644",
+      "bytes": 71091,
+      "sha256": "9e6390fe27fdaf5add1215a0ab60b16f1192295314f107b345f6d3ae65573c94"
+    },
+    {
+      "path": "frontend/package.json",
+      "mode": "100644",
+      "bytes": 699,
+      "sha256": "d3e247c422d8720cc51675af1248ad83f59cf10d0257778dd16cc2f6f85967b1"
+    },
+    {
+      "path": "frontend/public/brand-mark.svg",
+      "mode": "100644",
+      "bytes": 892,
+      "sha256": "38a6933e8b06ec7689574dee07a30be26e122b583496106c09fa140785d199d0"
+    },
+    {
+      "path": "frontend/smoke.mjs",
+      "mode": "100644",
+      "bytes": 4792,
+      "sha256": "615b37c61d1c132e1d00260ebd395c72c789c85a6625919e08c36d47b2bb5dca"
+    },
+    {
+      "path": "frontend/src/App.vue",
+      "mode": "100644",
+      "bytes": 44,
+      "sha256": "a2ee744d348e4dffd2821d24f8cbeebe6e1bd96209cbfba7a502c70ea4cdc741"
+    },
+    {
+      "path": "frontend/src/components/OrgTreeNode.vue",
+      "mode": "100644",
+      "bytes": 10907,
+      "sha256": "9668ee733ec46cb290dc1cd4d4f5aa3390d9dd41969c51d2f840959d5604c124"
+    },
+    {
+      "path": "frontend/src/components/approval/FlowDesignerCanvas.vue",
+      "mode": "100644",
+      "bytes": 5558,
+      "sha256": "4bf6a6a782dd682d96f4735ad232aa2eeed1b1537fb7f9075cc60d0f9318bb9c"
+    },
+    {
+      "path": "frontend/src/components/approval/FlowSequence.vue",
+      "mode": "100644",
+      "bytes": 32484,
+      "sha256": "069a825fbfc21b6bc317c604470495bab6a888804725dbd111169f3164cb0c6d"
+    },
+    {
+      "path": "frontend/src/composables/useDepartmentTree.ts",
+      "mode": "100644",
+      "bytes": 2419,
+      "sha256": "fc35c026dfb1075038ad8b2dd9115bfc416c84d91bb971ae2ba24cba72d53d01"
+    },
+    {
+      "path": "frontend/src/composables/useResponsiveLayout.ts",
+      "mode": "100644",
+      "bytes": 934,
+      "sha256": "bb6f5d4bd8deb9dfd7799229acc09c449b2449dfea239c85a7637448e7b593a2"
+    },
+    {
+      "path": "frontend/src/composables/useUserAccess.ts",
+      "mode": "100644",
+      "bytes": 1865,
+      "sha256": "6d69fda47932d03c480ff0a99e6153bd61bace23db5a5950322ac0715a84a806"
+    },
+    {
+      "path": "frontend/src/main.ts",
+      "mode": "100644",
+      "bytes": 579,
+      "sha256": "79f29fec51a5938ccf36958f650079d3133e6bcbfa886e574de33c16b36763a3"
+    },
+    {
+      "path": "frontend/src/router/index.ts",
+      "mode": "100644",
+      "bytes": 2875,
+      "sha256": "c5324f934dd39ca6544a5cc122856e31f9a077d5f975508379c33f87c474e6d9"
+    },
+    {
+      "path": "frontend/src/stores/user.ts",
+      "mode": "100644",
+      "bytes": 4589,
+      "sha256": "21bef590d099f1974b7a5b890b3d47ba4545da2f8e998a3380c14ec456932686"
+    },
+    {
+      "path": "frontend/src/styles/index.css",
+      "mode": "100644",
+      "bytes": 21162,
+      "sha256": "a2eac963e3042c21698b52cdba9b9d5a72a10a2400071ece5c5ee71f98055671"
+    },
+    {
+      "path": "frontend/src/utils/auditDisplay.ts",
+      "mode": "100644",
+      "bytes": 5459,
+      "sha256": "edfc2b46b1db9fa6d683027953745d28da2df5b441553e8264fbc420d17515ab"
+    },
+    {
+      "path": "frontend/src/utils/authSession.ts",
+      "mode": "100644",
+      "bytes": 4675,
+      "sha256": "4d90ba47b92d954c6c148a3b2fbd2f101e1abb3a4d0cacd3763178252d2cb5ca"
+    },
+    {
+      "path": "frontend/src/utils/consoleMonitor.ts",
+      "mode": "100644",
+      "bytes": 8799,
+      "sha256": "2d855cc48e2bc8ad6841936018606046b093fa87065e96f23f4d571fbe7b62ab"
+    },
+    {
+      "path": "frontend/src/utils/httpErrorReporter.ts",
+      "mode": "100644",
+      "bytes": 2478,
+      "sha256": "6c69a1541f2e47bf1194ca930e35b472c50da961ecf0d3d182e7aea209784547"
+    },
+    {
+      "path": "frontend/src/utils/request.ts",
+      "mode": "100644",
+      "bytes": 4871,
+      "sha256": "29719adf1bb059b03ef0a0a55d97fa89d640a8015f3274e8449f92f17b031f5a"
+    },
+    {
+      "path": "frontend/src/utils/status.ts",
+      "mode": "100644",
+      "bytes": 8179,
+      "sha256": "da61502201b49124e023ebb95c4e41941a4f07569210e0306dce30f64fbbd00f"
+    },
+    {
+      "path": "frontend/src/utils/wecom.ts",
+      "mode": "100644",
+      "bytes": 2636,
+      "sha256": "c9cf1b85f1dfeee12fdd1f7712646683311a464aa5deb1056f8b03829d832a5f"
+    },
+    {
+      "path": "frontend/src/views/ApprovalView.vue",
+      "mode": "100644",
+      "bytes": 512744,
+      "sha256": "7848e66d6e5d487910912c58266879fd10c921d7120865149da88af4269cb150"
+    },
+    {
+      "path": "frontend/src/views/AttendanceView.vue",
+      "mode": "100644",
+      "bytes": 413429,
+      "sha256": "07b8be76be8e9b38f35d26a025b770b6d1278545346e098136daee69eae5ac84"
+    },
+    {
+      "path": "frontend/src/views/EventMonitorView.vue",
+      "mode": "100644",
+      "bytes": 41667,
+      "sha256": "649dbeff2388848e9c884340c67991e263668795006d4b86d4309528d97dbb10"
+    },
+    {
+      "path": "frontend/src/views/FieldAudit.vue",
+      "mode": "100644",
+      "bytes": 4176,
+      "sha256": "919719de0af88f8dfec9620743be734250e3b70b1f86e933e0809b309c826ae6"
+    },
+    {
+      "path": "frontend/src/views/FieldDashboard.vue",
+      "mode": "100644",
+      "bytes": 5405,
+      "sha256": "af6beedc75788f8004a4844fc537cf9c8722557b9e34ac50b29f41108b6b73ed"
+    },
+    {
+      "path": "frontend/src/views/FieldPeople.vue",
+      "mode": "100644",
+      "bytes": 26177,
+      "sha256": "8b049298cb38f56064164cd9a2a4c12adc2ae7c14e5a647dea9603d082988d95"
+    },
+    {
+      "path": "frontend/src/views/FieldView.vue",
+      "mode": "100644",
+      "bytes": 51176,
+      "sha256": "bbcbac0d4baa6b186dc0522ffc8413c9b1be5cbbdfdb4d3e98e9e762ace4970f"
+    },
+    {
+      "path": "frontend/src/views/LayoutView.vue",
+      "mode": "100644",
+      "bytes": 24287,
+      "sha256": "d55700fabd57821012c4d91180969399bb7bc1d50db8b896ea7e623de23f5d19"
+    },
+    {
+      "path": "frontend/src/views/LoginView.vue",
+      "mode": "100644",
+      "bytes": 16573,
+      "sha256": "61eaf5549264cbb089d64c4866fc6a41880ad05935c493945ad6b6f158ac45f0"
+    },
+    {
+      "path": "frontend/src/views/MonthlyField.vue",
+      "mode": "100644",
+      "bytes": 14924,
+      "sha256": "d88372af74b844a5e55e84f1fd8013a880987aa098b9a5a31191b9913369d78a"
+    },
+    {
+      "path": "frontend/src/views/OrganizationView.vue",
+      "mode": "100644",
+      "bytes": 10493,
+      "sha256": "1ed50a002019e510576775612a0843b06a9d08a70310e0b445eedea22aa0f12f"
+    },
+    {
+      "path": "frontend/src/views/RotationView.vue",
+      "mode": "100644",
+      "bytes": 39490,
+      "sha256": "b6763366546b381d15b49c8a3adfdca3b8ace778089f0ec66c90742928fd2a34"
+    },
+    {
+      "path": "frontend/tsconfig.app.json",
+      "mode": "100644",
+      "bytes": 689,
+      "sha256": "ab924dcd0b3eca40209cc9b076ec9089a5df2403d70fca9dfb7cfe04ad0873e9"
+    },
+    {
+      "path": "frontend/tsconfig.json",
+      "mode": "100644",
+      "bytes": 126,
+      "sha256": "ad28d132ee48d6e23917cf5827cace785d0fc01a44ca68b0dda51cc8c3fd3f52"
+    },
+    {
+      "path": "frontend/tsconfig.node.json",
+      "mode": "100644",
+      "bytes": 454,
+      "sha256": "39c9db8c10f43b183665dfcf79e8c2564ab614433e5de4fe95dc1899124a9268"
+    },
+    {
+      "path": "frontend/ui-regression.mjs",
+      "mode": "100644",
+      "bytes": 9737,
+      "sha256": "6a7754a8661f9d8c0610c097ea71023c46a578737a1ef75ac1422dc004d9a309"
+    },
+    {
+      "path": "frontend/vite.config.ts",
+      "mode": "100644",
+      "bytes": 583,
+      "sha256": "528e1dbf7453062d3d8c188c56d32c60e53d7c7e9b52abcdc2ece8570137a920"
+    },
+    {
+      "path": "mobile/capacitor.config.ts",
+      "mode": "100644",
+      "bytes": 831,
+      "sha256": "c9ef021b0aa977a639dde38ea73aa36b4f3ed47e01a58efadeb784d893e4ffeb"
+    },
+    {
+      "path": "mobile/index.html",
+      "mode": "100644",
+      "bytes": 445,
+      "sha256": "ba4475fa9b71d6371c1cf929c254a3cbce3929642d74258c423b24c492cf7e63"
+    },
+    {
+      "path": "mobile/package-lock.json",
+      "mode": "100644",
+      "bytes": 112754,
+      "sha256": "b3cfbd54f5b4f84eb72a6297e12229315262e7defdea06dc5313a4a2508b159e"
+    },
+    {
+      "path": "mobile/package.json",
+      "mode": "100644",
+      "bytes": 974,
+      "sha256": "16d9554995cff36a7c356df3230a68fe16c02df3155a2a32822e7e1624488bfc"
+    },
+    {
+      "path": "mobile/public/brand-mark.svg",
+      "mode": "100644",
+      "bytes": 892,
+      "sha256": "38a6933e8b06ec7689574dee07a30be26e122b583496106c09fa140785d199d0"
+    },
+    {
+      "path": "mobile/src/App.vue",
+      "mode": "100644",
+      "bytes": 147,
+      "sha256": "4666d829eab088b9746eae33766f2a627ff4bc67ff98e8bf25f5a5ed7fd056d6"
+    },
+    {
+      "path": "mobile/src/components/MobileBreadcrumb.vue",
+      "mode": "100644",
+      "bytes": 10617,
+      "sha256": "c68ef28638b2fa3c04bc53e3e5b80b0b9842cb7616da476ac9e54c118847765d"
+    },
+    {
+      "path": "mobile/src/composables/useMobileChat.ts",
+      "mode": "100644",
+      "bytes": 2594,
+      "sha256": "bb5a64bf3ca8289356c8d2300022c037c9bc90e3051dd2cdb951e27262de9463"
+    },
+    {
+      "path": "mobile/src/composables/useMobileInbox.ts",
+      "mode": "100644",
+      "bytes": 4227,
+      "sha256": "65e9de2a45b1849f7c9634694243976565342d96c1f504743b7f56476942f345"
+    },
+    {
+      "path": "mobile/src/config/access.ts",
+      "mode": "100644",
+      "bytes": 2389,
+      "sha256": "99842ca0356acbfb38e5e75edf8200af28b770087804e44c3a1b4db3dd86ec34"
+    },
+    {
+      "path": "mobile/src/config/workbench.ts",
+      "mode": "100644",
+      "bytes": 3509,
+      "sha256": "86ce3bde5c3111609be02c4d1811b4ce68828757c907240801469c0eadba4076"
+    },
+    {
+      "path": "mobile/src/env.d.ts",
+      "mode": "100644",
+      "bytes": 170,
+      "sha256": "9cbf32fe70e1deccf8a6e6ea60d7ff830e0168b641f44099dca378cc09dbfe5e"
+    },
+    {
+      "path": "mobile/src/layouts/AppTabs.vue",
+      "mode": "100644",
+      "bytes": 3072,
+      "sha256": "2355f5e5ad8e2df92a100f61d98c64e30a7ead1e1e38f265325968aaadee9ea2"
+    },
+    {
+      "path": "mobile/src/main.ts",
+      "mode": "100644",
+      "bytes": 790,
+      "sha256": "bd0a35ffe37996452b7a57ae3fd408f56a1f9ca11bf4598e482a2dcdef289ce2"
+    },
+    {
+      "path": "mobile/src/pages/ApprovalDetailPage.vue",
+      "mode": "100644",
+      "bytes": 67831,
+      "sha256": "a1a81be931c62566f10917561b1b4780eec184445ce4a8a7ee926ddeb6bf8c9e"
+    },
+    {
+      "path": "mobile/src/pages/ApprovalStartPage.vue",
+      "mode": "100644",
+      "bytes": 178501,
+      "sha256": "4a108d12b85001e082fd6125a142d40b846e85b643102945065b135a6176dd40"
+    },
+    {
+      "path": "mobile/src/pages/ApprovalsPage.vue",
+      "mode": "100644",
+      "bytes": 36778,
+      "sha256": "29b6b3383d0932c9cdcd9525a44442d77ccfc9283685daaf0411503efe810ab3"
+    },
+    {
+      "path": "mobile/src/pages/AttendancePage.vue",
+      "mode": "100644",
+      "bytes": 208880,
+      "sha256": "810937c3db0addbb1026df3cacf1c9ded57e39bba17800c93cdcd041c81e44ba"
+    },
+    {
+      "path": "mobile/src/pages/HomePage.vue",
+      "mode": "100644",
+      "bytes": 53915,
+      "sha256": "00a13a87f12e59500b3a604b58d6c4a895f417050eb9f9c929744c06cc45c538"
+    },
+    {
+      "path": "mobile/src/pages/LoginPage.vue",
+      "mode": "100644",
+      "bytes": 11367,
+      "sha256": "e83e43dc9d7a74fc70f866ae2fd1b2a25527429d94f76df0f8b3837c99a6dfda"
+    },
+    {
+      "path": "mobile/src/pages/MessageCenterPage.vue",
+      "mode": "100644",
+      "bytes": 16540,
+      "sha256": "3c058241f7932ff78ba32ee4d4808a72732b2431bad7446ab024f54697f66d28"
+    },
+    {
+      "path": "mobile/src/pages/MobileFieldPage.vue",
+      "mode": "100644",
+      "bytes": 12383,
+      "sha256": "9be7d7c513268cfe85a390f58a1c8f11eef038c8d519e05ebbf771a55a8c27fb"
+    },
+    {
+      "path": "mobile/src/pages/MonthlyAttendance.vue",
+      "mode": "100644",
+      "bytes": 9584,
+      "sha256": "af22ed6ce6b5aee54db362cc999b2e546181b1dbdd232be51a1380cd560284ae"
+    },
+    {
+      "path": "mobile/src/pages/PeoplePage.vue",
+      "mode": "100644",
+      "bytes": 2045,
+      "sha256": "1908e9593d29a1b0bc164b0eb9373ca257f0a66977811dabb74fc496bf3785da"
+    },
+    {
+      "path": "mobile/src/pages/ProfilePage.vue",
+      "mode": "100644",
+      "bytes": 24745,
+      "sha256": "4da66f4fed8f167b964184e740a6504ac0f0a2de7661ab2800cfae7cdd2dbc00"
+    },
+    {
+      "path": "mobile/src/pages/RotationPage.vue",
+      "mode": "100644",
+      "bytes": 34381,
+      "sha256": "f0f662ff868174e684ea36627e4799111ebce776a0e3474c96512c8ec2d679df"
+    },
+    {
+      "path": "mobile/src/pages/TeamAttendancePage.vue",
+      "mode": "100644",
+      "bytes": 6195,
+      "sha256": "8414c8a0b325f8928b1c827d9b7d569b64b875ad8e5d0c5dcf5256986b882fcc"
+    },
+    {
+      "path": "mobile/src/pages/WorkbenchPage.vue",
+      "mode": "100644",
+      "bytes": 8190,
+      "sha256": "0c283165a70a6a383a13aa686e2c53833a6a327b441f37866940dabf6f2b0438"
+    },
+    {
+      "path": "mobile/src/router/index.ts",
+      "mode": "100644",
+      "bytes": 4940,
+      "sha256": "d8bd99f8b882069967c3a6324e93777e23453af0e699f58c6dd152de982e0ed1"
+    },
+    {
+      "path": "mobile/src/stores/auth.ts",
+      "mode": "100644",
+      "bytes": 3437,
+      "sha256": "e7b02e4904954cf0524591009267e2834de7e4c1f5014b3f8039d9831010ed18"
+    },
+    {
+      "path": "mobile/src/styles/global.css",
+      "mode": "100644",
+      "bytes": 13634,
+      "sha256": "daff2c30e3298c454efc4eec2f19e179c3777d9748b41693b91698c013f5963c"
+    },
+    {
+      "path": "mobile/src/theme/variables.css",
+      "mode": "100644",
+      "bytes": 951,
+      "sha256": "4adf79072384002b1cfac88363fbcfc79691c892de7afa2621f7f56c0ca2794f"
+    },
+    {
+      "path": "mobile/src/utils/authSession.ts",
+      "mode": "100644",
+      "bytes": 1286,
+      "sha256": "25643f318e0a85871f7ed2b45e10116631e2f28d8ba9407abf09f86269c8c8c4"
+    },
+    {
+      "path": "mobile/src/utils/format.ts",
+      "mode": "100644",
+      "bytes": 7885,
+      "sha256": "5754121c17c30f9bd1218357fd5b6c227434cb46289c3180584ede5ff60eeca6"
+    },
+    {
+      "path": "mobile/src/utils/geolocation.ts",
+      "mode": "100644",
+      "bytes": 4307,
+      "sha256": "1be1faf227413fe61ca96510a5fc173dc967b6d0f815087344bce51417e00a3e"
+    },
+    {
+      "path": "mobile/src/utils/request.ts",
+      "mode": "100644",
+      "bytes": 3486,
+      "sha256": "99df8c22f759ec6be12ff154aaf1c9dcc12c5e8403ea5408674b0b6207196991"
+    },
+    {
+      "path": "mobile/src/utils/wecom.ts",
+      "mode": "100644",
+      "bytes": 2738,
+      "sha256": "ca40d9a5d8ddfa2a51e15084b71fac4f83de00f72f947c3d52932ce06bbcfc2f"
+    },
+    {
+      "path": "mobile/tsconfig.json",
+      "mode": "100644",
+      "bytes": 601,
+      "sha256": "f5621d9add86d758c5b63f0933e98d2abe299a34783cf8bd2fbd48353f12278d"
+    },
+    {
+      "path": "mobile/tsconfig.node.json",
+      "mode": "100644",
+      "bytes": 216,
+      "sha256": "95ef7a3f097caeb2cf9b7fa06ebb0eac535b1b1113e8c6eb9536663a39c89794"
+    },
+    {
+      "path": "mobile/vite.config.ts",
+      "mode": "100644",
+      "bytes": 3351,
+      "sha256": "27b97351a76b92efb8c5329d741f9e2c5b627f7596c79cfcdbefc717bd60df80"
+    },
+    {
+      "path": "scripts/check.sh",
+      "mode": "100755",
+      "bytes": 1600,
+      "sha256": "89d0829a92196ced656a09b2dd4aca1ec3bad6a724dd7d38d1b82317e45cd23e"
+    },
+    {
+      "path": "scripts/dev.py",
+      "mode": "100644",
+      "bytes": 4287,
+      "sha256": "2b50618ef21c6961ef7a903cb2366bc89c304fff32ec80b81b66cd19eb076c08"
+    },
+    {
+      "path": "scripts/package_source.py",
+      "mode": "100644",
+      "bytes": 3277,
+      "sha256": "3e81379e1d682e2b1d112c951cf76b416bd5c0345b4c0da546b774df73b07f8c"
+    },
+    {
+      "path": "scripts/setup.sh",
+      "mode": "100755",
+      "bytes": 599,
+      "sha256": "a085e23d2c77333fb5af196400f5b5de5306caa8f94c5d8d48c3ad2d393b073f"
+    },
+    {
+      "path": "scripts/smoke_deployment.py",
+      "mode": "100644",
+      "bytes": 1985,
+      "sha256": "1976520c2d1998e67cf4ee0aad91cb105e577a246cc481a8dbe16f9c2c97d9a9"
+    },
+    {
+      "path": "scripts/test_audit_display.mjs",
+      "mode": "100644",
+      "bytes": 1567,
+      "sha256": "4940c46a0a91f900be24228f4ace675f2b5fc1916c900edce90cf8653cbf3e98"
+    },
+    {
+      "path": "scripts/test_auth_roster.py",
+      "mode": "100644",
+      "bytes": 22768,
+      "sha256": "e261b270ed1a8b72e92d5550896d70511f82273debd81360894930867ae3759a"
+    },
+    {
+      "path": "scripts/test_deployment.py",
+      "mode": "100644",
+      "bytes": 1578,
+      "sha256": "37fc70afd32617371a45c8d2358e9a7cee5eb9ead5fa15e0973f8bfed448cdbd"
+    },
+    {
+      "path": "scripts/test_field_approval_roles.py",
+      "mode": "100644",
+      "bytes": 14979,
+      "sha256": "26d8ce3db02d093559d9269c0ff453af7031ae351612e447adce4f193f0d812e"
+    },
+    {
+      "path": "scripts/test_field_dashboard.py",
+      "mode": "100644",
+      "bytes": 9349,
+      "sha256": "f35b49347a47c42d026f4908607126dfe6fbc62bd58757adb42765fb15e4f6cd"
+    },
+    {
+      "path": "scripts/test_field_roles.py",
+      "mode": "100644",
+      "bytes": 18092,
+      "sha256": "47d9df7e741dc6fefc0053755bdab9e8825ca0abefac84433d991917e15980d5"
+    },
+    {
+      "path": "scripts/test_integration.py",
+      "mode": "100644",
+      "bytes": 21565,
+      "sha256": "f31f736e296cdf16618eb621af68a18b9e2d0d8208a6e6070636475ced54e66c"
+    },
+    {
+      "path": "scripts/test_legal_holidays.py",
+      "mode": "100644",
+      "bytes": 9042,
+      "sha256": "2d9ecdb80a1fc62c54f9da5c232b4e9019e70c289f50a0cd10d75adc65ff151f"
+    },
+    {
+      "path": "scripts/test_map_settings.py",
+      "mode": "100644",
+      "bytes": 5389,
+      "sha256": "16e58303f9b3d3ff72a82e05acba99e248256e51960c7c09a504a33386e2fc31"
+    },
+    {
+      "path": "scripts/test_monthly_field.py",
+      "mode": "100644",
+      "bytes": 8924,
+      "sha256": "0dfe43e77c93f14cd130f0d18e7f05f5cc25a26741ffd4fe9afc80010b655671"
+    },
+    {
+      "path": "scripts/test_project_membership.py",
+      "mode": "100644",
+      "bytes": 10608,
+      "sha256": "4247f638a5e95b39f58ee81b4e3840eb73b2538574f2437462aa983336684922"
+    },
+    {
+      "path": "scripts/test_rotation.py",
+      "mode": "100644",
+      "bytes": 47425,
+      "sha256": "b5f8d164a9b49345e4658f054e0e694859f3bfdfe45839badd73fc78bd91ec5a"
+    },
+    {
+      "path": "scripts/test_tegene_projects.py",
+      "mode": "100644",
+      "bytes": 16003,
+      "sha256": "3826fd43fd78e02a8aa00a0a0de044028254492cd79d99dc7e87590b7963505d"
+    }
+  ],
+  "public_redactions": [
+    {
+      "path": "docs/09-账号花名册与企微入口.md",
+      "count": 2,
+      "reason": "two personal phone numbers in account documentation",
+      "replacement": "手机号已脱敏-1/2"
+    }
+  ],
+  "root_mirror": {
+    "adjustments": [
+      {
+        "path": ".dockerignore",
+        "reason": "exclude archived versions from future Docker build contexts",
+        "sha256": "b6d67e619cf546e0b7452b7e0d24bf1b9afcf16c9f96e1f87ae18bff3b0d0d6c"
+      }
+    ],
+    "extra_archive_metadata": [
+      "VERSIONS.md",
+      "versions/"
+    ],
+    "matches_snapshot_except": [
+      ".dockerignore"
+    ]
+  },
+  "schema_version": 1,
+  "snapshot_directory": "versions/no2-20261110-134652-CST-8c9b9b2",
+  "source_commit": "8c9b9b21b81736ec66dbf401a40cda702714372f",
+  "source_ref": "codex/aftersales-no2",
+  "source_repository": "https://github.com/Jaydon-Lidong/aftersales-field-management",
+  "source_tree": "6c5f8ed5d40bfd3b2f6c33ddf6e2b4148ca57949",
+  "total_bytes": 8367170,
+  "version_id": "no2-20261110-134652-CST-8c9b9b2"
+}

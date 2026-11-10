@@ -6561,9 +6561,11 @@ async def _field_absence_flow_snapshot(
     )).all()
     admin_ids = [item for item in _dedupe_positive_ids(list(admin_role_ids) + list(superuser_ids))
                  if item != applicant_id]
-    recipients = _dedupe_positive_ids(manager_ids + admin_ids)
+    from app.services.monthly_field import active
+    monthly_mode = await active(db)
+    recipients = ([i for i in await aftersales_manager_ids(db) if i != applicant_id] if monthly_mode else _dedupe_positive_ids(manager_ids + admin_ids))
     if not recipients:
-        raise HTTPException(status_code=409, detail="未配置售后经理或管理员，无法提交申请")
+        raise HTTPException(status_code=409, detail="未配置可用审批人，无法提交申请")
     return json.dumps({
         "flow_id": flow.id,
         "flow_name": flow.name,
@@ -6580,8 +6582,15 @@ async def _field_absence_flow_snapshot(
     }, ensure_ascii=False)
 
 
+async def _manager_only_module(db, module):
+    if module in FIELD_ABSENCE_CODES:
+        return True
+    from app.services.monthly_field import active
+    return isinstance(db, AsyncSession) and await active(db)
+
+
 async def _is_field_absence_instance(db: AsyncSession, instance: ApprovalInstance) -> bool:
-    if _instance_text(instance, "module") not in FIELD_ABSENCE_CODES:
+    if not await _manager_only_module(db, _instance_text(instance, "module")):
         return False
     if not isinstance(db, AsyncSession) or not isinstance(instance, ApprovalInstance):
         return False
@@ -6634,7 +6643,7 @@ async def create_instance(
         await _ensure_template_submit_allowed(db, approval_type, applicant_id)
     flow = await _determine_flow(db, data.module)
     field_absence = False
-    if data.module in FIELD_ABSENCE_CODES and isinstance(db, AsyncSession):
+    if isinstance(db, AsyncSession) and await _manager_only_module(db, data.module):
         from app.services.field_roles import is_aftersales_person
 
         field_absence = await is_aftersales_person(db, applicant_id)
@@ -6700,7 +6709,7 @@ async def maybe_create_approval_instance(
     except HTTPException:
         return None
     field_absence = False
-    if module in FIELD_ABSENCE_CODES and isinstance(db, AsyncSession):
+    if isinstance(db, AsyncSession) and await _manager_only_module(db, module):
         from app.services.field_roles import is_aftersales_person
 
         field_absence = await is_aftersales_person(db, applicant_id)
@@ -6940,11 +6949,16 @@ async def list_my_pending(
         from app.services.field_roles import role_names
 
         field_roles = await role_names(db, approver)
+        from app.services.monthly_field import active
+        from app.services.field_roles import aftersales_person_ids
+        monthly_mode = await active(db)
+        field_scope = (ApprovalInstance.applicant_id.in_(aftersales_person_ids()) if monthly_mode
+                       else ApprovalInstance.module.in_(FIELD_ABSENCE_CODES))
         field_absence_stmt = _apply_approval_archive_filters(
             select(ApprovalInstance)
             .options(selectinload(ApprovalInstance.records), selectinload(ApprovalInstance.tasks))
             .where(ApprovalInstance.status == "pending",
-                   ApprovalInstance.module.in_(FIELD_ABSENCE_CODES))
+                   field_scope)
             .order_by(ApprovalInstance.created_at.desc(), ApprovalInstance.id.desc()),
             business_type=business_type,
             start_date=start_date,
@@ -6960,8 +6974,8 @@ async def list_my_pending(
             if item.applicant_id == approver_id:
                 continue
             applicant_is_manager = "aftersales_manager" in await role_names(db, item.applicant_id)
-            if "admin" in field_roles or (
-                "aftersales_manager" in field_roles and not applicant_is_manager
+            if ("admin" in field_roles and not monthly_mode) or (
+                "aftersales_manager" in field_roles and (monthly_mode or not applicant_is_manager)
             ):
                 eligible_ids.add(item.id)
                 if item.id not in seen_instance_ids:
@@ -6969,7 +6983,7 @@ async def list_my_pending(
                     seen_instance_ids.add(item.id)
         task_pending = [
             item for item in task_pending
-            if item.module not in FIELD_ABSENCE_CODES
+            if (not monthly_mode and item.module not in FIELD_ABSENCE_CODES)
             or not await _is_field_absence_instance(db, item)
             or item.id in eligible_ids
         ]
@@ -7563,7 +7577,8 @@ async def process_approval(
         from app.services.field_roles import require_aftersales_approver, role_names
 
         approver_role = await require_aftersales_approver(db, approver_id, data.comment)
-        if "aftersales_manager" in await role_names(db, instance.applicant_id) and approver_role != "admin":
+        from app.services.monthly_field import active
+        if not await active(db) and "aftersales_manager" in await role_names(db, instance.applicant_id) and approver_role != "admin":
             raise HTTPException(status_code=403, detail="售后经理本人申请只能由管理员填写原因代审")
         await _ensure_field_absence_route(db, instance)
 
