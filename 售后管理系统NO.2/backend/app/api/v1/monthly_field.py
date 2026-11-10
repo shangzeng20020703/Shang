@@ -17,11 +17,13 @@ from app.models.monthly_field import (
     MonthlyHoursReview,
     MonthlyPunch,
     MonthlyRest,
+    MonthlyRestFact,
     ProjectConfirmation,
     ProjectRadius,
 )
 from app.services import monthly_field as monthly
 from app.services import monthly_shifts as shifts
+from app.services import monthly_rest as earned_rest
 from app.services.attendance import AttendanceRecordService
 from app.services.field_roles import is_aftersales_person, role_names
 
@@ -76,7 +78,9 @@ class HoursDecision(BaseModel):
 
 class RestInput(BaseModel):
     day: date
-    reason: str = Field(min_length=1, max_length=500)
+    reason: str = Field(default="", max_length=500)
+    mode: Literal["direct", "request"] | None = None
+    expected_balance: int | None = None
 
 
 class Review(BaseModel):
@@ -100,7 +104,10 @@ async def context(user=Depends(get_current_user), db=Depends(get_db)):
     if rule and rule.shifts:
         day, shift, previous, resume = await shifts.punch_context(db, user.id, stamp)
         rule = monthly.rule_for(rules, day)
+    start = await earned_rest.effective(db)
     return dict(
+        earned_rest=bool(start and day >= start),
+        earned_from=start,
         shifts=bool(rule and rule.shifts),
         shift=shift.kind if shift else None,
         next_kind="out" if previous and previous.kind == "in" else "in",
@@ -135,6 +142,7 @@ async def save_policy(body: PolicyInput, user=Depends(manager), db=Depends(get_d
     if any(r.effective > body.effective and not r.shifts for r in rules):
         raise HTTPException(409, "请在已安排的旧规则之后启用班次")
     db.add(MonthlyPolicy(**body.model_dump(), shifts=True))
+    await earned_rest.enable(db, body.effective)
     await db.flush()
     return body
 
@@ -171,7 +179,7 @@ async def save_place(
 
 @router.post("/punch")
 async def punch(body: PunchInput, user=Depends(employee), db=Depends(get_db)):
-    await db.scalar(select(Employee.id).where(Employee.id == user.id).with_for_update())
+    await earned_rest.lock_employee(db, user.id)
     key = str(body.request_key)
     old = await db.scalar(
         select(MonthlyPunch).where(
@@ -200,6 +208,21 @@ async def punch(body: PunchInput, user=Depends(employee), db=Depends(get_db)):
         rule = monthly.rule_for(rules, day)
     else:
         previous = await shifts.last_punch(db, user.id, day)
+    start = await earned_rest.effective(db)
+    if (
+        start
+        and day >= start
+        and await db.scalar(
+            select(MonthlyRest.id)
+            .where(
+                MonthlyRest.employee_id == user.id,
+                MonthlyRest.day == day,
+                MonthlyRest.status == "approved",
+            )
+            .with_for_update()
+        )
+    ):
+        raise HTTPException(409, "当日已确认整天休假")
     if rule.photo or body.photo:
         file = await db.scalar(
             select(FieldFile.id).where(
@@ -249,6 +272,7 @@ async def punch(body: PunchInput, user=Depends(employee), db=Depends(get_db)):
     )
     db.add(item)
     await db.flush()
+    await earned_rest.sync_work(db, item, stamp)
     return dict(id=item.id, day=day, matches=matches)
 
 
@@ -284,17 +308,17 @@ async def review_hours(body: HoursDecision, user=Depends(manager), db=Depends(ge
         body.missing_minutes > 0
     ):
         raise HTTPException(422, "请填写原因，并为缺工时填入有效分钟数")
-    db.add(
-        MonthlyHoursReview(
-            punch_id=target.id,
-            manager_id=user.id,
-            at=monthly.now(),
-            outcome=body.outcome,
-            missing_minutes=body.missing_minutes,
-            reason=body.reason.strip(),
-        )
+    decision = MonthlyHoursReview(
+        punch_id=target.id,
+        manager_id=user.id,
+        at=monthly.now(),
+        outcome=body.outcome,
+        missing_minutes=body.missing_minutes,
+        reason=body.reason.strip(),
     )
+    db.add(decision)
     await db.flush()
+    await earned_rest.sync_work(db, target, monthly.now(), decision)
     return {"outcome": body.outcome}
 
 
@@ -343,24 +367,93 @@ async def confirm(body: Resolution, user=Depends(manager), db=Depends(get_db)):
     return {"code": body.code}
 
 
+async def rest_options(db, person, day, *, locking=False):
+    stamp = monthly.now()
+    start = await earned_rest.effective(db)
+    if not start or day < start or day > stamp.date():
+        raise HTTPException(422, "请选择新规则启用日至今天之间的休假日期")
+    report = await monthly.month_report(db, day, person.id)
+    row = next((r for p in report for r in p["days"] if r["day"] == day), None)
+    if not row:
+        raise HTTPException(422, "该日不在员工考勤期间")
+    latest = (
+        select(MonthlyPunch.id)
+        .where(MonthlyPunch.employee_id == person.id, MonthlyPunch.day == day)
+        .limit(1)
+    )
+    if locking:
+        latest = latest.with_for_update()
+    if await db.scalar(latest) or row["status"] in {"holiday", "trip", "leave"}:
+        raise HTTPException(409, "已有出勤或全天免卡安排，无法登记整天额度休假")
+    if day == stamp.date():
+        active_day, _, previous, _ = await shifts.punch_context(db, person.id, stamp)
+        if active_day != day and previous and previous.kind == "in":
+            raise HTTPException(409, "请先完成上一班次的下班卡")
+    balance, progress = await earned_rest.personal_balance(
+        db, person.id, start, stamp.date(), locking=locking
+    )
+    return dict(
+        day=day,
+        balance=balance,
+        after=balance - 1,
+        progress=progress,
+        mode="direct" if day == stamp.date() and balance >= 1 else "request",
+    )
+
+
+@router.get("/me/rest-preview")
+async def preview_rest(day: date, user=Depends(employee), db=Depends(get_db)):
+    options = await rest_options(db, user, day)
+    if await db.scalar(
+        select(MonthlyRest.id).where(
+            MonthlyRest.employee_id == user.id, MonthlyRest.day == day
+        )
+    ):
+        raise HTTPException(409, "该日期已有休假记录，请查看审批结果")
+    return options
+
+
 @router.post("/rest")
 async def apply_rest(body: RestInput, user=Depends(employee), db=Depends(get_db)):
+    await earned_rest.lock_employee(db, user.id)
     rules = await monthly.policies(db)
-    if (
-        not monthly.rule_for(rules, body.day)
-        or body.day < max(user.hire_date or body.day, monthly.opened_date(user))
-        or not body.reason.strip()
+    start = await earned_rest.effective(db)
+    quota = start and body.day >= start
+    if not monthly.rule_for(rules, body.day) or body.day < max(
+        user.hire_date or body.day, monthly.opened_date(user)
     ):
-        raise HTTPException(422, "请选择有效考勤日期并填写原因")
+        raise HTTPException(422, "请选择有效考勤日期")
+    existing = await db.scalar(
+        select(MonthlyRest)
+        .where(MonthlyRest.employee_id == user.id, MonthlyRest.day == body.day)
+        .with_for_update()
+    )
+    if existing:
+        return {"id": existing.id, "status": existing.status}
+    mode = "request"
+    if quota:
+        options = await rest_options(db, user, body.day, locking=True)
+        mode = options["mode"]
+        if body.mode != mode or (
+            body.expected_balance is not None
+            and body.expected_balance != options["balance"]
+        ):
+            raise HTTPException(409, "请重新查看休假日期和余额后确认")
+    if mode == "request" and not body.reason.strip():
+        raise HTTPException(422, "请填写休假原因")
+    direct = mode == "direct"
     row = MonthlyRest(
         employee_id=user.id,
         day=body.day,
-        reason=body.reason.strip(),
+        reason=body.reason.strip() or "本人确认使用休假额度",
         created=monthly.now(),
+        status="approved" if direct else "pending",
     )
     db.add(row)
     await db.flush()
-    return {"id": row.id}
+    if direct:
+        db.add(MonthlyRestFact(employee_id=user.id, day=body.day, rest_id=row.id))
+    return {"id": row.id, "status": row.status}
 
 
 @router.get("/requests")
@@ -383,6 +476,12 @@ async def review(item_id: int, body: Review, user=Depends(manager), db=Depends(g
     row = await db.get(MonthlyRest, item_id)
     if not row:
         raise HTTPException(404, "申请不存在")
+    await earned_rest.lock_employee(db, row.employee_id)
+    start = await earned_rest.effective(db)
+    debit = body.approved and start and row.day >= start and row.created.date() >= start
+    if debit:
+        person = await db.get(Employee, row.employee_id)
+        await rest_options(db, person, row.day, locking=True)
     result = await db.execute(
         update(MonthlyRest)
         .where(MonthlyRest.id == item_id, MonthlyRest.status == "pending")
@@ -395,6 +494,11 @@ async def review(item_id: int, body: Review, user=Depends(manager), db=Depends(g
     )
     if result.rowcount != 1:
         raise HTTPException(409, "该申请已处理")
+    if debit:
+        db.add(
+            MonthlyRestFact(employee_id=row.employee_id, day=row.day, rest_id=row.id)
+        )
+        await db.flush()
     await monthly.month_report(db, row.day, row.employee_id, persist=True)
     return {"id": item_id}
 

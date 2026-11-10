@@ -276,6 +276,11 @@ async def main():
         await req("POST", "/monthly/hours/review", expected=409, json=decision)
         april = await own("2030-04-01")
         assert april["shortage_days"] == april["shortage_minutes"] == 1
+        for day in (6, 7):
+            clock = datetime(2030, 4, day, 8)
+            await hit("in", 40, shift="day")
+            clock = datetime(2030, 4, day, 20)
+            await hit("out", 40)
         clock = datetime(2030, 4, 29, 20)
         first = await hit("in", 40, shift="night")
         clock = datetime(2030, 4, 30, 19, 59)
@@ -305,7 +310,7 @@ async def main():
         clock = datetime(2030, 5, 1, 8)
         await hit("out", 40)
         april = await own("2030-04-01")
-        assert april["full_days"] == 3 and april["days"][-1]["worked_seconds"] == 43200
+        assert april["full_days"] == 5 and april["days"][-1]["worked_seconds"] == 43200
         assert (
             april["days"][-2]["status"] == "normal"
             and april["days"][-2]["worked_seconds"] == 0
@@ -317,7 +322,10 @@ async def main():
         assert (await hit("out", 40))["day"] == "2030-05-01"
         clock = datetime(2030, 5, 3, 1)
         may = await own("2030-05-01")
-        assert [r["status"] for r in may["days"][:2]] == ["full", "rest"]
+        assert [r["status"] for r in may["days"][:2]] == ["full", "absent"]
+        assert april["work_progress"] == 5 and april["rest_balance"] == 0
+        assert may["rest_balance"] == 1 and may["work_progress"] == 0
+        assert may["missing_punches"] == 2 and may["absence_days"] == 1
         clock = datetime(2030, 5, 3, 7)
         await hit("in", 39, shift="night")
         clock = datetime(2030, 5, 3, 19)
@@ -335,6 +343,65 @@ async def main():
         await hit("out", 40, 409, attendance_day="2030-05-04")
         row = (await own("2030-05-01"))["days"][-2]
         assert row["status"] == "pending_hours" and row["worked_seconds"] == 0
+        assert row["missing_punches"] == 1
+        assert (
+            april["days"][3]["missing_punches"] == 0 and april["shortage_minutes"] == 1
+        )
+        assert (
+            april["days"][28]["missing_punches"] == 1
+            and april["days"][28]["status"] == "normal"
+        )
+
+        async def rest(day, mode):
+            return await req(
+                "POST",
+                "/monthly/rest",
+                "001",
+                json=dict(day=day, mode=mode, reason="休假测试"),
+            )
+
+        preview = await req("GET", "/monthly/me/rest-preview?day=2030-05-05", "001")
+        assert preview["balance"] == 1 and preview["mode"] == "direct"
+        assert (await rest("2030-05-05", "direct"))["status"] == "approved"
+        await rest("2030-05-05", "direct")
+        await hit("in", 40, 409, shift="day")
+        assert (await own("2030-05-01"))["rest_balance"] == 0
+        clock = datetime(2030, 5, 6, 8)
+        item = await rest("2030-05-06", "request")
+        assert (
+            item["status"] == "pending"
+            and (await own("2030-05-01"))["rest_balance"] == 0
+        )
+        review_url = f"/monthly/requests/{item['id']}/review"
+        await req("POST", review_url, json={"approved": True})
+        await req("POST", review_url, expected=409, json={"approved": True})
+        assert (await own("2030-05-01"))["rest_balance"] == -1
+        for day in range(7, 13):
+            clock = datetime(2030, 5, day, 8)
+            await hit("in", 40, shift="day")
+            clock = datetime(2030, 5, day, 20)
+            await hit("out", 40)
+        may = await own("2030-05-01")
+        assert (
+            may["rest_balance"] == may["work_progress"] == 0 and may["leave_days"] == 2
+        )
+        item = await rest("2030-05-02", "request")
+        await req(
+            "POST", f"/monthly/requests/{item['id']}/review", json={"approved": True}
+        )
+        after = await own("2030-05-01")
+        assert (
+            after["rest_balance"] == -1
+            and after["missing_punches"] == may["missing_punches"] - 2
+        )
+        assert after["absence_days"] == may["absence_days"] - 1
+        assert (await own())["earned_rest"] is False
+        clock = datetime(2030, 5, 13, 8)
+        denied = await rest("2030-05-13", "request")
+        await req(
+            "POST", f"/monthly/requests/{denied['id']}/review", json={"approved": False}
+        )
+        assert (await own("2030-05-01"))["rest_balance"] == -1
     await engine.dispose()
     print(
         "NO.2 monthly attendance, permissions, GPS, overnight, approvals and settlement passed"

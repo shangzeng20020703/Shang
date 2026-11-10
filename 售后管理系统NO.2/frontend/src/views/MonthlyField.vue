@@ -15,9 +15,7 @@
       ><router-link to="/approval">业务审批</router-link>
     </nav>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="!ctx.active">
-      请设置统一考勤规则。自生效日起按月计算四天休息额度。
-    </p>
+    <p v-if="!ctx.active">请设置统一考勤规则。从生效日起按满勤天数累计休假。</p>
     <template v-if="tab === '每日考勤'">
       <div class="filters">
         <label
@@ -41,8 +39,10 @@
             <th>当日状态</th>
             <th>班次 / 实际工时</th>
             <th>项目 / 上下班卡</th>
-            <th>本月已休</th>
-            <th>本月缺勤</th>
+            <th>本月打卡 / 满勤</th>
+            <th>已休 / 休假余额</th>
+            <th>缺卡 / 缺勤</th>
+            <th>本月缺工时</th>
             <th></th>
           </tr>
         </thead>
@@ -102,8 +102,31 @@
                   .join(' · ')
               }}</small>
             </td>
-            <td>{{ r.rest_used }} / 4 天</td>
-            <td>{{ r.absence_days }} 天</td>
+            <td>
+              {{ r.punch_count }} 次<small>满勤 {{ r.full_days }} 天</small>
+            </td>
+            <td>
+              已休 {{ r.leave_days }} 天<small v-if="r.earned_rest"
+                >余额 {{ r.rest_balance }} 天 · 进度
+                {{ r.work_progress }}/6</small
+              >
+            </td>
+            <td>
+              缺卡 {{ r.missing_punches }} 次<small
+                >缺勤 {{ r.absence_days }} 天</small
+              >
+            </td>
+            <td>
+              已确认 {{ duration(r.shortage_minutes)
+              }}<small>{{ r.shortage_days }} 天</small>
+              <small v-if="r.pending_hours_days"
+                >待审 {{ r.pending_hours_days }} 天 · 可核算
+                {{ duration(r.pending_estimate_minutes)
+                }}<template v-if="r.pending_unknown_days">
+                  · {{ r.pending_unknown_days }} 天待核定</template
+                ></small
+              >
+            </td>
             <td>
               <button
                 v-if="r.day.hours_status === 'pending_hours'"
@@ -135,6 +158,14 @@
             >{{ shiftLabel(d.shift) }} · 实际
             {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
             {{ labels[d.hours_status] }}</small
+          >
+          <small v-if="d.shift"
+            >要求 12 小时 ·
+            {{
+              d.suggested_minutes == null
+                ? '缺卡，差额待核定'
+                : '打卡差额 ' + duration(d.suggested_minutes)
+            }}</small
           >
           <small v-if="d.review"
             >{{ d.review.reason }} · 核定缺
@@ -227,8 +258,8 @@
         ><button type="button" @click="reviewDialog?.close()">取消</button>
       </form>
     </dialog>
-    <template v-if="tab === '额外休息审批'"
-      ><p v-if="!requests.length">暂无额外休息申请。</p>
+    <template v-if="tab === '休假审批'"
+      ><p v-if="!requests.length">暂无休假申请。</p>
       <article v-for="r in requests" :key="r.id">
         <strong>{{ r.name }} · {{ r.day }}</strong
         >　{{ states[r.status] }}
@@ -252,7 +283,7 @@
         /></label>
         <p>
           白班、夜班每日应出勤 12 小时。白班在当日结束时结算，夜班在首次上班后
-          24 小时结算。
+          24 小时结算。每满勤 6 天获得 1 天休假，余额和进度跨月保留。
         </p>
         <label
           ><input type="checkbox" v-model="form.photo" /> 打卡必须拍照</label
@@ -376,7 +407,7 @@ import { get, post, put, buildProtectedFileUrl } from '@/utils/request'
 const tabs = [
     '每日考勤',
     '工时审批',
-    '额外休息审批',
+    '休假审批',
     '统一规则',
     '项目地点',
     '历史记录',
@@ -391,6 +422,7 @@ const labels: Record<string, string> = {
   present: '已打卡',
   conflict: '项目异常',
   waiting: '今日未打卡',
+  quota_rest: '额度休假',
   rest: '休息',
   absent: '缺勤',
   approved_rest: '已批额外休息',
@@ -480,7 +512,7 @@ const visibleRows = computed(() =>
 const fmt = (s: string) => s.replace('T', ' ').slice(0, 16)
 const requestText = (d: any) =>
   d.application
-    ? '额外休息' + states[d.application.status] + ' ' + d.application.note
+    ? '休假' + states[d.application.status] + ' ' + d.application.note
     : ''
 const file = ref<File>(),
   preview = ref<any>()
@@ -653,6 +685,7 @@ small {
   background: #d6f2df;
   color: #16542f;
 }
+.quota_rest,
 .rest,
 .waiting {
   background: #fff0b6;

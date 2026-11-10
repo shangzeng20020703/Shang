@@ -190,7 +190,7 @@ async def initialize():
                                     customer_id=None, manager_id=None))
                 existing_codes.add(row.code)
         await db.flush()
-        for version in range(1, 19):
+        for version in range(1, 20):
             if not await db.get(FieldSchemaVersion, version):
                 db.add(FieldSchemaVersion(version=version))
         await db.commit()

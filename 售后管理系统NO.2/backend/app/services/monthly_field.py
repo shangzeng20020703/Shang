@@ -19,9 +19,11 @@ from app.models.monthly_field import (
     MonthlyHoursReview,
     MonthlyPunch,
     MonthlyRest,
+    MonthlyRestFact,
     ProjectConfirmation,
     ProjectRadius,
 )
+from app.services import monthly_rest as earned_rest
 from app.services.monthly_shifts import evaluate
 from app.services.field_roles import aftersales_person_ids
 from app.services.legal_holidays import LegalHolidayService
@@ -259,11 +261,20 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
     roster = list(await db.scalars(people))
     ids = [p.id for p in roster]
 
+    earned_from = await earned_rest.effective(db)
+    balances = await earned_rest.totals(db, ids, earned_from, last)
+
     def scope(model):
         return select(model).where(
             model.employee_id.in_(ids), model.day.between(first, last)
         )
 
+    spent = {
+        (f.employee_id, f.day)
+        for f in await db.scalars(
+            scope(MonthlyRestFact).where(MonthlyRestFact.rest_id.is_not(None))
+        )
+    }
     punches = defaultdict(list)
     for p in await db.scalars(
         scope(MonthlyPunch).order_by(MonthlyPunch.at, MonthlyPunch.id)
@@ -371,7 +382,18 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
                     "shortage",
                 }:
                     row["status"] = row["hours_status"]
-            used += row["status"] == "rest"
+            accrual = earned_from is not None and day >= earned_from
+            if accrual and row["status"] == "rest":
+                row["status"] = "absent"
+            if key in spent:
+                row["status"] = "quota_rest"
+            row["punch_count"] = len(logs)
+            row["missing_punches"] = (
+                2
+                if row["status"] == "absent"
+                else int(bool(logs and logs[-1].kind == "in" and stamp >= row["end"]))
+            )
+            used += row["status"] in {"rest", "quota_rest"}
             absent += row["status"] == "absent"
             if persist:
                 existing = absences.get(key)
@@ -401,6 +423,28 @@ async def month_report(db, first, employee_id=None, stamp=None, persist=False):
                     employee_id=person.id,
                     employee_no=person.employee_no,
                     name=person.name,
+                    earned_rest=bool(earned_from and last >= earned_from),
+                    rest_balance=balances.get(person.id, (0, 0))[0],
+                    work_progress=balances.get(person.id, (0, 0))[1],
+                    punch_count=sum(r["punch_count"] for r in days),
+                    missing_punches=sum(r["missing_punches"] for r in days),
+                    leave_days=sum(
+                        r["status"] in {"quota_rest", "rest", "approved_rest", "leave"}
+                        for r in days
+                    ),
+                    pending_estimate_minutes=sum(
+                        r.get("suggested_minutes") or 0
+                        for r in days
+                        if r.get("hours_status") == "pending_hours"
+                    ),
+                    pending_unknown_days=sum(
+                        r.get("suggested_minutes") is None
+                        for r in days
+                        if r.get("hours_status") == "pending_hours"
+                    ),
+                    pending_hours_days=sum(
+                        r.get("hours_status") == "pending_hours" for r in days
+                    ),
                     rest_used=used,
                     absence_days=absent,
                     full_days=sum(

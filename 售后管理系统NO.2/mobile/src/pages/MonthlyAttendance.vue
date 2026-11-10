@@ -18,11 +18,19 @@
             {{ shiftLabel(r.days.at(-1)?.shift) }} ·
             {{ r.days.at(-1)?.project?.name
             }}<small
-              >本月已休 {{ r.rest_used }} 天 · 缺勤
-              {{ r.absence_days }} 天</small
+              >打卡 {{ r.punch_count }} 次 · 满勤 {{ r.full_days }} 天 · 已休
+              {{ r.leave_days }} 天 · 缺卡 {{ r.missing_punches }} 次 · 缺勤
+              {{ r.absence_days }} 天 · 已确认缺
+              {{ duration(r.shortage_minutes) }}（{{
+                r.shortage_days
+              }}
+              天）<template v-if="r.earned_rest">
+                · 余额 {{ r.rest_balance }} 天 · 进度
+                {{ r.work_progress }}/6</template
+              ></small
             >
           </article>
-          <h2>额外休息审批</h2>
+          <h2>休假审批</h2>
           <article v-for="r in applications" :key="r.id">
             {{ r.name }} · {{ r.day }} · {{ r.reason }}
             <small>{{ states[r.status] }}</small
@@ -77,15 +85,58 @@
               <h2>选择本次上班班次</h2>
               <button @click="chooseShift('day')">白班（早班）</button>
               <button @click="chooseShift('night')">夜班（晚班）</button>
+              <button v-if="ctx.earned_rest" @click="previewRest(ctx.day)">
+                休假
+              </button>
               <button @click="shiftDialog?.close()">取消</button>
+            </dialog>
+            <dialog ref="restDialog" aria-label="确认整天休假">
+              <form v-if="quote" @submit.prevent="confirmRest">
+                <h2>{{ quote.day }} · 休假 1 天</h2>
+                <p>
+                  当前余额 {{ quote.balance }} 天 ·
+                  {{ quote.mode === 'direct' ? '休后' : '获批后' }}余额
+                  {{ quote.after }} 天
+                </p>
+                <label v-if="quote.mode === 'request'"
+                  >申请原因
+                  <input v-model.trim="reason" required maxlength="500"
+                /></label>
+                <button :disabled="busy">
+                  {{
+                    quote.mode === 'direct' ? '确认休假' : '提交售后经理审批'
+                  }}
+                </button>
+                <button type="button" @click="restDialog?.close()">取消</button>
+              </form>
             </dialog>
           </section>
           <label
             >考勤月份 <input type="month" v-model="month" @change="refresh"
           /></label>
           <p>
-            已用休息 {{ rows[0]?.rest_used || 0 }} / 4 天　缺勤
+            打卡 {{ rows[0]?.punch_count || 0 }} 次 · 满勤
+            {{ rows[0]?.full_days || 0 }} 天 · 已休
+            {{ rows[0]?.leave_days || 0 }} 天 · 缺卡
+            {{ rows[0]?.missing_punches || 0 }} 次 · 缺勤
             {{ rows[0]?.absence_days || 0 }} 天
+          </p>
+          <p v-if="rows[0]?.earned_rest">
+            休假余额 {{ rows[0].rest_balance }} 天 · 攒假进度
+            {{ rows[0].work_progress }}/6 天
+          </p>
+          <p v-if="rows[0]">
+            已确认缺工时 {{ duration(rows[0].shortage_minutes) }}（{{
+              rows[0].shortage_days
+            }}
+            天）
+            <small v-if="rows[0].pending_hours_days"
+              >待审 {{ rows[0].pending_hours_days }} 天 · 可核算
+              {{ duration(rows[0].pending_estimate_minutes)
+              }}<template v-if="rows[0].pending_unknown_days">
+                · {{ rows[0].pending_unknown_days }} 天待核定</template
+              ></small
+            >
           </p>
           <details
             v-for="d in [...(rows[0]?.days || [])].reverse()"
@@ -99,6 +150,14 @@
               >{{ shiftLabel(d.shift) }} · 实际
               {{ duration(Math.floor(d.worked_seconds / 60)) }} ·
               {{ labels[d.hours_status] }}</small
+            >
+            <small v-if="d.shift"
+              >要求 12 小时 ·
+              {{
+                d.suggested_minutes == null
+                  ? '缺卡，差额待核定'
+                  : '打卡差额 ' + duration(d.suggested_minutes)
+              }}</small
             >
             <small v-if="d.review"
               >{{ d.review.reason }} · 核定缺
@@ -122,8 +181,19 @@
             </p>
             <small v-if="oldRows && !oldRows.length">该月无旧版记录</small>
           </details>
-          <h2>额外休息申请</h2>
-          <form @submit.prevent="apply">
+          <h2>休假登记与补休</h2>
+          <form v-if="ctx.earned_rest" @submit.prevent="previewRest(restDay)">
+            <input
+              aria-label="休假日期"
+              type="date"
+              required
+              v-model="restDay"
+              :min="ctx.earned_from"
+              :max="ctx.day"
+            />
+            <button :disabled="busy">查看余额并确认</button>
+          </form>
+          <form v-else @submit.prevent="apply">
             <input
               aria-label="休息日期"
               type="date"
@@ -173,6 +243,7 @@ const labels: Record<string, string> = {
   present: '已打卡',
   conflict: '项目异常 · 待确认',
   waiting: '今日未打卡',
+  quota_rest: '额度休假',
   rest: '休息',
   absent: '缺勤',
   approved_rest: '已批额外休息',
@@ -267,6 +338,35 @@ async function startPunch() {
     shiftDialog.value?.showModal()
   else punch()
 }
+const restDialog = ref<HTMLDialogElement>(),
+  quote = ref<any>()
+async function previewRest(day: string) {
+  if (busy.value) return
+  shiftDialog.value?.close()
+  busy.value = true
+  error.value = ''
+  try {
+    quote.value = await get('/monthly/me/rest-preview', { day })
+    reason.value = ''
+    restDialog.value?.showModal()
+  } catch (e: any) {
+    error.value = e.response?.data?.detail || '读取休假余额失败'
+  } finally {
+    busy.value = false
+  }
+}
+const confirmRest = () =>
+  action(async () => {
+    restDialog.value?.close()
+    const result = await post('/monthly/rest', {
+      day: quote.value.day,
+      mode: quote.value.mode,
+      expected_balance: quote.value.balance,
+      reason: reason.value,
+    })
+    feedback.value =
+      result.status === 'approved' ? '已确认休假' : '已提交售后经理审批'
+  })
 function chooseShift(shift: string) {
   shiftDialog.value?.close()
   punch(shift)
@@ -392,7 +492,8 @@ input {
   color: #166637;
 }
 .waiting,
-.rest {
+.rest,
+.quota_rest {
   color: #836000;
 }
 .absent,

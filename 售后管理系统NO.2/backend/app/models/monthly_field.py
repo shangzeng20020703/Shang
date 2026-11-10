@@ -106,3 +106,15 @@ class MonthlyHoursReview(Base):
     reason: Mapped[str] = mapped_column(String(500))
     manager_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
     at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MonthlyRestFact(Base):
+    """Each attendance day can contribute one full workday or spend one day of leave."""
+
+    __tablename__ = "field_monthly_rest_facts"
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("employees.id"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    punch_id: Mapped[int | None] = mapped_column(ForeignKey("field_monthly_punches.id"))
+    rest_id: Mapped[int | None] = mapped_column(ForeignKey("field_monthly_rest.id"))
